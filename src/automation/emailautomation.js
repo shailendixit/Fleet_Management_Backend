@@ -140,7 +140,7 @@ async function processUnreadGmailMessages() {
  */
 async function startWatch() {
     try {
-        const topicName = process.env.PUBSUB_TOPIC_NAME || process.env.GMAIL_PUBSUB_TOPIC;
+        const topicName = process.env.GMAIL_PUBSUB_TOPIC_NAME || process.env.GMAIL_PUBSUB_TOPIC;
         if (!topicName) throw new Error('PUBSUB_TOPIC_NAME (or GMAIL_PUBSUB_TOPIC) env var is required');
 
         const auth = await getOAuth2Client();

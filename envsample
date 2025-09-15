@@ -8,19 +8,19 @@
 # server with the prisma dev CLI command, when not choosing any non-default ports or settings. The API key, unlike the 
 # one found in a remote Prisma Postgres URL, does not contain any sensitive information.
 
-DATABASE_URL=""
+DATABASE_URL="postgresql://neondb_owner:npg_wcLrGdDto4Q0@ep-shiny-sunset-a7ug27ka-pooler.ap-southeast-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-JWT_SECRET=""
+JWT_SECRET="TempSecret"
 
 
 # Gmail IMAP Configuration
-GMAIL_USER=""
-GMAIL_APP_PASSWORD=""
+GMAIL_USER=satkaushik131@gmail.com
+GMAIL_APP_PASSWORD="swdf zcwe ikbr qhsg"
 
 # Send Alert configuration
-ALERT_EMAIL_FROM=""
-ALERT_EMAIL_TO=""
-ALERT_EMAIL_SUBJECT=""
+ALERT_EMAIL_FROM=satkaushik131@gmail.com
+ALERT_EMAIL_TO=satkaushik131@gmail.com
+ALERT_EMAIL_SUBJECT="Alert: Missing invoiceId for attached order ids"
 
 # Email Processing Settings
 CHECK_INTERVAL=2 # minutes
@@ -29,4 +29,13 @@ CHECK_INTERVAL=2 # minutes
 NODE_TLS_REJECT_UNAUTHORIZED=0
 
 #ENV port
-PORT=""
+PORT=3000
+
+# OAUth2 Credentials for Gmail API
+GMAIL_OAUTH_CLIENT_ID="251823168296-b2bn74n93tm66favi4fn73kms41r49v2.apps.googleusercontent.com"
+GMAIL_OAUTH_CLIENT_SECRET="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"
+OAUTH_REDIRECT_URI="https://developers.google.com/oauthplayground"      
+GMAIL_OAUTH_REFRESH_TOKEN="1//04zoLg0LLBtqtCgYIARAAGAQSNwF-L9IrC2p77f8QGBSwAcYmt7Q43vbIBKxyAF-eVm4zA7HJv0bXAbVCYD28sb2XQahdrXnxZOQ"
+GMAIL_PUBSUB_TOPIC_NAME="projects/third-being-471807-j7/topics/Fleet-Emails"
+GMAIL_PUBSUB_SUBSCRIPTION_NAME="projects/third-being-471807-j7/subscriptions/Fleet-Emails-sub"
+OAUTH_ACCESS_TOKEN="ya29.a0AS3H6NwuHVL65ZOrcYQo8nQoqLV8lE25c_bFvOJM0XuOCq9oZZziynFB7G-6U_kzvOkdXyWau1cU2LRlp3nNQrB1rxTr7aRJYmAF5mM6yuAHGelLyd_2aHok2g9LKS_ndA-r0-MGhUL-ELX_GjDArTMgC46KmGxB0QXKioDqS5Sg_eowzbWTH2uacKW77aMtkH3WzDwaCgYKAfYSARASFQHGX2MialFGLITDG5jyEQAe49-ccQ0206"
