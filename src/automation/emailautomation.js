@@ -147,7 +147,7 @@ async function startWatch() {
         const gmail = google.gmail({ version: 'v1', auth });
 
         console.log('Registering Gmail watch on topic:', topicName);
-        const res = await gmail.users.watch({ userId: 'me', requestBody: { topicName } });
+        const res = await gmail.users.watch({ userId: 'satkaushik131@gmail.com', requestBody: { topicName } });
         console.log('Gmail watch registered:', res.data);
     } catch (e) {
         console.error('Failed to start Gmail watch:', e);

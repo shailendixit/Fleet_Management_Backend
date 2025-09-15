@@ -20,6 +20,7 @@
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "googleapis": "^159.0.0",
+  "@google-cloud/pubsub": "^4.6.0",
     "imap-simple": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.7.4",
