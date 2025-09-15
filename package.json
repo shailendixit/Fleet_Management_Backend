@@ -19,13 +19,13 @@
     "dotenv": "^17.2.2",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "googleapis": "^159.0.0",
     "imap-simple": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.7.4",
     "multer": "^2.0.2",
+    "nodemailer": "^6.9.3",
     "prisma": "^6.13.0",
     "xlsx": "^0.18.5"
-  ,
-  "nodemailer": "^6.9.3"
   }
 }

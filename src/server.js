@@ -6,16 +6,17 @@ const server = app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
 
   // Start unified email automation in-process when configured
-  if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+  // Prefer Gmail API watch if OAuth credentials are present
+  if (process.env.GMAIL_OAUTH_CLIENT_ID && process.env.GMAIL_OAUTH_CLIENT_SECRET && process.env.GMAIL_OAUTH_REFRESH_TOKEN) {
     try {
-      const { startListening: startEmailAutomation } = require('./automation/emailautomation');
-      startEmailAutomation();
-      console.log('Unified email automation started');
+      const { startWatch } = require('./automation/emailautomation');
+      startWatch();
+      console.log('Gmail watch started (using Gmail API + Pub/Sub)');
     } catch (e) {
-      console.error('Failed to start unified email automation:', e);
+      console.error('Failed to start Gmail watch automation:', e);
     }
   } else {
-    console.log('GMAIL credentials not set; automation not started');
+    console.log('GMAIL OAuth credentials not set; Gmail watch not started. Set GMAIL_OAUTH_CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN and PUBSUB_TOPIC_NAME to enable.');
   }
 });
 

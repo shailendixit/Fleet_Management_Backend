@@ -14,12 +14,16 @@ app.use(cors({
 
 const authRoutes= require('./modules/auth/auth.routes');
 const taskRoutes = require('./modules/task_assignments/task.routes');
+const gmailRoutes = require('./modules/gmail/gmail.routes');
 
 //All API routes for authentication
 app.use('/api/auth', authRoutes);
 
 // All API routes for task uploads
 app.use('/api/tasks', taskRoutes);
+
+// Gmail Pub/Sub push endpoint
+app.use('/api/gmail', gmailRoutes);
 
 app.get('/', (req, res) => {
   res.send('Welcome to the Task Assignment API');   

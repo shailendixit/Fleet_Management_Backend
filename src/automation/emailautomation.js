@@ -1,4 +1,3 @@
-const Imap = require('imap');
 const { simpleParser } = require('mailparser');
 const fs = require('fs');
 const path = require('path');
@@ -6,112 +5,6 @@ const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 
 dotenv.config();
-
-const imapConfig = {
-    user: process.env.GMAIL_USER,
-    password: process.env.GMAIL_APP_PASSWORD,
-    host: 'imap.gmail.com',
-    port: 993,
-    tls: true,
-    tlsOptions: { rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0' }
-};
-
-async function startListening() {
-    console.log('🚀 Starting unified email automation...');
-    console.log(`📧 Monitoring inbox: ${imapConfig.user}`);
-
-    const imap = new Imap(imapConfig);
-
-    imap.once('ready', function () {
-        imap.openBox('INBOX', false, function (err, box) {
-            if (err) throw err;
-            console.log('✅ Connected to inbox, listening for new messages...');
-
-            imap.on('mail', function (numNewMsgs) {
-                console.log(`🔔 ${numNewMsgs} new message(s) arrived!`);
-                fetchNewEmails(imap);
-            });
-
-            fetchNewEmails(imap);
-        });
-    });
-
-    imap.once('error', function (err) {
-        console.error('❌ IMAP Error:', err);
-        setTimeout(startListening, 10000); // Reconnect
-    });
-
-    imap.once('end', function () {
-        console.log('❌ IMAP connection ended, reconnecting...');
-        setTimeout(startListening, 10000);
-    });
-
-    imap.connect();
-}
-
-function fetchNewEmails(imap) {
-    imap.search(['UNSEEN'], function (err, results) {
-        if (err) { console.error('Search error:', err); return; }
-        if (!results || !results.length) { console.log('No new messages'); return; }
-
-        const f = imap.fetch(results, { bodies: [''], struct: true });
-
-        f.on('message', function (msg, seqno) {
-            msg.on('body', function (stream, info) {
-                let buffer = '';
-                stream.on('data', chunk => buffer += chunk.toString('utf8'));
-                stream.once('end', function () {
-                    simpleParser(buffer, async (err, parsed) => {
-                        if (err) { console.error('Error parsing email:', err); return; }
-
-                        const subject = (parsed.subject || '').toLowerCase();
-                        console.log(`Email subject: ${subject}`);
-
-                        if (!parsed.attachments || parsed.attachments.length === 0) {
-                            console.log('No attachments, skipping.');
-                            return;
-                        }
-
-                        // Determine which controller to call based on subject
-                        const taskController = require('../modules/task_assignments/task.controller');
-
-                        for (const attachment of parsed.attachments) {
-                            if (!attachment.filename) continue;
-                            const lower = attachment.filename.toLowerCase();
-                            if (!(lower.endsWith('.xlsx') || lower.endsWith('.xls'))) continue;
-
-                            // If subject mentions TaskSheet -> call uploadExcel
-                            if (subject.includes('tasksheet')) {
-                                console.log('Detected TaskSheet -> calling uploadExcel in-process');
-                                const fakeReq = { file: { buffer: attachment.content } };
-                                const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadExcel result', c, b) }) };
-                                try { await taskController.uploadExcel(fakeReq, fakeRes); }
-                                catch (e) { console.error('uploadExcel failed:', e); }
-
-                            } else if (subject.includes('invoicesheet')) {
-                                console.log('Detected InvoiceSheet -> calling uploadInvoiceExcel in-process');
-                                const fakeReq = { file: { buffer: attachment.content } };
-                                const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadInvoiceExcel result', c, b) }) };
-                                try {
-                                    await taskController.uploadInvoiceExcel(fakeReq, fakeRes);
-
-                                    // after update, find rows still missing invoiceId and email an alert
-                                    await sendMissingInvoiceAlert();
-                                } catch (e) { console.error('uploadInvoiceExcel failed:', e); }
-                            }
-                        }
-                    });
-                });
-            });
-
-            msg.once('end', function () {
-                imap.addFlags(results, ['\\Seen'], function (err) { if (err) console.error('Error marking message as read:', err); });
-            });
-        });
-
-        f.once('error', function (err) { console.error('Fetch error:', err); });
-    });
-}
 
 async function sendMissingInvoiceAlert() {
     try {
@@ -143,6 +36,129 @@ async function sendMissingInvoiceAlert() {
     }
 }
 
-if (require.main === module) startListening();
+// --- New helpers to support Gmail API driven processing (Pub/Sub push) ---
+const { google } = require('googleapis');
 
-module.exports = { startListening };
+async function processParsedEmail(parsed) {
+    try {
+        const subject = (parsed.subject || '').toLowerCase();
+        console.log(`Email subject: ${subject}`);
+
+        if (!parsed.attachments || parsed.attachments.length === 0) {
+            console.log('No attachments, skipping.');
+            return;
+        }
+
+        const taskController = require('../modules/task_assignments/task.controller');
+
+        for (const attachment of parsed.attachments) {
+            if (!attachment.filename) continue;
+            const lower = attachment.filename.toLowerCase();
+            if (!(lower.endsWith('.xlsx') || lower.endsWith('.xls'))) continue;
+
+            if (subject.includes('tasksheet')) {
+                console.log('Detected TaskSheet -> calling uploadExcel in-process');
+                const fakeReq = { file: { buffer: attachment.content } };
+                const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadExcel result', c, b) }) };
+                try { await taskController.uploadExcel(fakeReq, fakeRes); }
+                catch (e) { console.error('uploadExcel failed:', e); }
+
+            } else if (subject.includes('invoicesheet')) {
+                console.log('Detected InvoiceSheet -> calling uploadInvoiceExcel in-process');
+                const fakeReq = { file: { buffer: attachment.content } };
+                const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadInvoiceExcel result', c, b) }) };
+                try {
+                    await taskController.uploadInvoiceExcel(fakeReq, fakeRes);
+                    await sendMissingInvoiceAlert();
+                } catch (e) { console.error('uploadInvoiceExcel failed:', e); }
+            }
+        }
+    } catch (e) {
+        console.error('processParsedEmail error:', e);
+    }
+}
+
+async function processRawBuffer(buffer) {
+    return new Promise((resolve, reject) => {
+        simpleParser(buffer, async (err, parsed) => {
+            if (err) return reject(err);
+            try {
+                await processParsedEmail(parsed);
+                resolve();
+            } catch (e) { reject(e); }
+        });
+    });
+}
+
+async function getOAuth2Client() {
+    const clientId = process.env.GMAIL_OAUTH_CLIENT_ID;
+    const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET;
+    const refreshToken = process.env.GMAIL_OAUTH_REFRESH_TOKEN;
+    if (!clientId || !clientSecret || !refreshToken) {
+        throw new Error('GMAIL_OAUTH_CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN not set in env');
+    }
+    const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret);
+    oAuth2Client.setCredentials({ refresh_token: refreshToken });
+    return oAuth2Client;
+}
+
+/**
+ * Fetch unread messages via Gmail API, parse and process attachments.
+ * This method uses OAuth2 refresh token provided in env vars.
+ */
+async function processUnreadGmailMessages() {
+    try {
+        const auth = await getOAuth2Client();
+        const gmail = google.gmail({ version: 'v1', auth });
+
+        // List unread messages
+        const listRes = await gmail.users.messages.list({ userId: 'me', q: 'is:unread' });
+        const messages = (listRes.data && listRes.data.messages) || [];
+        if (!messages.length) { console.log('No unread messages found via Gmail API'); return; }
+
+        for (const m of messages) {
+            try {
+                const msg = await gmail.users.messages.get({ userId: 'me', id: m.id, format: 'raw' });
+                const raw = msg.data.raw;
+                if (!raw) continue;
+                const buffer = Buffer.from(raw, 'base64');
+                await processRawBuffer(buffer);
+
+                // mark as read
+                await gmail.users.messages.modify({ userId: 'me', id: m.id, resource: { removeLabelIds: ['UNREAD'] } });
+            } catch (e) { console.error('Error processing message', m.id, e); }
+        }
+    } catch (e) {
+        console.error('processUnreadGmailMessages error:', e);
+        throw e;
+    }
+}
+
+/**
+ * Start Gmail watch so Gmail publishes notifications to a Pub/Sub topic.
+ * Requires GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET, GMAIL_OAUTH_REFRESH_TOKEN, and PUBSUB_TOPIC_NAME env vars.
+ */
+async function startWatch() {
+    try {
+        const topicName = process.env.PUBSUB_TOPIC_NAME || process.env.GMAIL_PUBSUB_TOPIC;
+        if (!topicName) throw new Error('PUBSUB_TOPIC_NAME (or GMAIL_PUBSUB_TOPIC) env var is required');
+
+        const auth = await getOAuth2Client();
+        const gmail = google.gmail({ version: 'v1', auth });
+
+        console.log('Registering Gmail watch on topic:', topicName);
+        const res = await gmail.users.watch({ userId: 'me', requestBody: { topicName } });
+        console.log('Gmail watch registered:', res.data);
+    } catch (e) {
+        console.error('Failed to start Gmail watch:', e);
+        throw e;
+    }
+}
+
+
+if (require.main === module) {
+    // If run directly, start the Gmail watch (API) instead of IMAP
+    startWatch().catch(e => console.error('startWatch failed:', e));
+}
+
+module.exports = { startWatch, processUnreadGmailMessages, processRawBuffer, processParsedEmail };
