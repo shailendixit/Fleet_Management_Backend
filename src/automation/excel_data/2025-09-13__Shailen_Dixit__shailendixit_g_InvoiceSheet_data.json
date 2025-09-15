@@ -1,0 +1,96 @@
+{
+  "processedAt": "2025-09-13T04:23:29.992Z",
+  "emailInfo": {
+    "id": 799,
+    "subject": "InvoiceSheet",
+    "from": "\"Shailen Dixit\" <shailendixit@gmail.com>",
+    "date": "2025-09-13T04:23:12.000Z",
+    "attachmentName": "TaskSheet_12_12_2002.xlsx"
+  },
+  "data": {
+    "Sheet1": [
+      {
+        "Document Number": 12617596,
+        "Order Number": 124507,
+        "Or Ty": "V2",
+        "Line Num": 1,
+        "Invoice Date": "2024-01-03T00:00:00.000Z",
+        "Invoice Time": 193552,
+        "Quantity": 1,
+        "2nd Item Number": 82724,
+        "Description 1": "RANGE OR90SPI6X1 FP AA",
+        "Branch/Plant": "NA",
+        "Ship To Name": "WINNING APPL (TAREN POINT) (F&P AGENT)",
+        "Address 1": "15 SHIRLEY ST",
+        "Address 2": null,
+        "Postcode": 2142,
+        "City": "ROSEHILL",
+        "Route Code": "N02",
+        "Actual Ship": "2024-02-21T00:00:00.000Z",
+        "Manifest Number": 4308443,
+        "Weight UOM": "KG",
+        "Weight": 131,
+        "Volume UOM": "M3",
+        "Volume": 6748,
+        "undefined": null
+      },
+      {
+        "Document Number": 12676204,
+        "Order Number": 124508,
+        "Or Ty": "V2",
+        "Line Num": 1,
+        "Invoice Date": "2024-02-14T00:00:00.000Z",
+        "Invoice Time": 193552,
+        "Quantity": 1,
+        "2nd Item Number": 82878,
+        "Description 1": "DISHDRAWER DD60D2NX9 FP AA",
+        "Branch/Plant": "NA",
+        "Ship To Name": "WINNING APPL (TAREN POINT) (F&P AGENT)",
+        "Address 1": "15 SHIRLEY ST",
+        "Address 2": null,
+        "Postcode": 2142,
+        "City": "ROSEHILL",
+        "Route Code": "N02",
+        "Actual Ship": "2024-02-21T00:00:00.000Z",
+        "Manifest Number": 4308443,
+        "Weight UOM": "KG",
+        "Weight": 54,
+        "Volume UOM": "M3",
+        "Volume": 3960,
+        "undefined": null
+      },
+      {
+        "Document Number": 12677778,
+        "Order Number": 124509,
+        "Or Ty": "V2",
+        "Line Num": 1,
+        "Invoice Date": "2024-02-15T00:00:00.000Z",
+        "Invoice Time": 193552,
+        "Quantity": 1,
+        "2nd Item Number": 82432,
+        "Description 1": "DISHWASHER DW60FC4X2 FP AA",
+        "Branch/Plant": "NA",
+        "Ship To Name": "WINNING APPL / AOL (ROSEHILL)(F&P AGENT)",
+        "Address 1": "15 Shirley Street",
+        "Address 2": null,
+        "Postcode": 2142,
+        "City": "ROSEHILL",
+        "Route Code": "N02",
+        "Actual Ship": "2024-02-21T00:00:00.000Z",
+        "Manifest Number": 4308443,
+        "Weight UOM": "KG",
+        "Weight": 59,
+        "Volume UOM": "M3",
+        "Volume": 5230,
+        "undefined": null
+      }
+    ]
+  },
+  "summary": {
+    "totalSheets": 1,
+    "totalRows": 3,
+    "sheetNames": [
+      "Sheet1"
+    ]
+  }
+}

@@ -1,0 +1,167 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Task_DB{
+  taskId                   Int      @id @default(autoincrement())
+  orderCo              Float?
+  orTy                 String?
+  orderNumber          Float?
+  branchPlant          String?
+  customerPO           String?
+  suburbTown           String?
+  name                 String?
+  description          String?
+  quantityShipped      Float?
+  itemNumber           Float?
+  postalCode           Float?
+  revNbr               Float?
+  revisionReason       String?
+  routeCode            String?
+  schedPick            DateTime?
+  truckId              String?
+  location             String?
+  scheduledPickTime    Float?
+  requestDate          DateTime?
+  soldTo               Float?
+  shipTo               Float?
+  deliverTo            Float?
+  stateCode            String?
+  lnTy                 String?
+  descriptionLine2     String?
+  zoneNo               String?
+  stopCode             String?
+  nextStat             Float?
+  lastStat             Float?
+  priority             Float?
+  futureQtyCommitted   Float?
+  quantityOrdered      Float?
+  reasonCode           String?
+  lineNumber           Float?
+  isassigned          Boolean  @default(false)
+}
+
+enum Status {
+  available
+  unavailable
+}
+
+model Driver_Db {
+  driverId          Int      @id @default(autoincrement())
+  truckNo     Int?
+  cubic       Float?   @map("Cubic (m3)")
+  driverName  String?  @map("Drivers Name")
+  truckType   String?  @map("Truck")
+  status      Status   @default(available)
+}
+model User_Db {
+  id          Int      @id @default(autoincrement())
+  username    String   @unique
+  email       String   @unique
+  password    String
+}
+
+
+model AssignedTask_DB {
+  assignedTaskId    Int      @id @default(autoincrement())
+  taskId             Int      @unique
+  orderCo              Float?
+  orTy                 String?
+  orderNumber          Float?
+  branchPlant          String?
+  customerPO           String?
+  suburbTown           String?
+  name                 String?
+  description          String?
+  quantityShipped      Float?
+  itemNumber           Float?
+  postalCode           Float?
+  revNbr               Float?
+  revisionReason       String?
+  routeCode            String?
+  schedPick            DateTime?
+  truckId              String?
+  location             String?
+  scheduledPickTime    Float?
+  requestDate          DateTime?
+  soldTo               Float?
+  shipTo               Float?
+  deliverTo            Float?
+  stateCode            String?
+  lnTy                 String?
+  descriptionLine2     String?
+  zoneNo               String?
+  stopCode             String?
+  nextStat             Float?
+  lastStat             Float?
+  priority             Float?
+  futureQtyCommitted   Float?
+  quantityOrdered      Float?
+  reasonCode           String?
+  lineNumber           Float?
+  truckNo             Int?
+  cubic               Float?   @map("Cubic (m3)")
+  driverName          String?  @map("Drivers Name")
+  truckType           String?  @map("Truck")
+  assignedAt         DateTime @default(now())
+  invoiceId          String? 
+  manifestNo         String? 
+  isCompleted       Boolean  @default(false)
+}
+
+model CompletedTask_DB {
+    taskId             Int      @unique
+  orderCo              Float?
+  orTy                 String?
+  orderNumber          Float?
+  branchPlant          String?
+  customerPO           String?
+  suburbTown           String?
+  name                 String?
+  description          String?
+  quantityShipped      Float?
+  itemNumber           Float?
+  postalCode           Float?
+  revNbr               Float?
+  revisionReason       String?
+  routeCode            String?
+  schedPick            DateTime?
+  truckId              String?
+  location             String?
+  scheduledPickTime    Float?
+  requestDate          DateTime?
+  soldTo               Float?
+  shipTo               Float?
+  deliverTo            Float?
+  stateCode            String?
+  lnTy                 String?
+  descriptionLine2     String?
+  zoneNo               String?
+  stopCode             String?
+  nextStat             Float?
+  lastStat             Float?
+  priority             Float?
+  futureQtyCommitted   Float?
+  quantityOrdered      Float?
+  reasonCode           String?
+  lineNumber           Float?
+  truckNo             Int?
+  driverName          String?  @map("Drivers Name")
+  assignedAt         DateTime @default(now())
+  invoiceId          String? @unique
+  manifestNo         String? 
+  POD               String?
+  completedAt       DateTime @default(now())
+}
