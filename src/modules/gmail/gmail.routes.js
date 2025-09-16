@@ -6,29 +6,24 @@ const { processUnreadGmailMessages } = require('../../automation/emailautomation
 // Expects body like { message: { data: '<base64>' }, subscription: 'projects/..../subscriptions/..' }
 router.post('/push', async (req, res) => {
     try {
-        // Immediately acknowledge receipt to Pub/Sub by returning 200 unless you want to
-        // do processing synchronously and only ack on success. For simplicity we will process
-        // and return 200 on success.
-
         const body = req.body;
         if (!body || !body.message) {
             console.log('Invalid Pub/Sub push received');
             return res.status(400).send('Bad Request');
         }
 
-        // The data portion is base64-encoded. For Gmail watch notifications the data typically
-        // contains a JSON with historyId and other fields. But rather than rely on it, we'll
-        // simply fetch unread messages via Gmail API and process them. This is simpler and
-        // works for small volumes.
+        // Ack immediately: return 200 to Pub/Sub so it does not retry while we process.
+        // Run processing asynchronously (fire-and-forget). This prevents duplicate
+        // processing when the handler takes longer than the Pub/Sub ack deadline.
+        console.log('Pub/Sub push received, acknowledged to Pub/Sub, starting async Gmail poll');
+        res.status(200).send('OK');
 
-        console.log('Pub/Sub push received, triggering Gmail API poll');
-        // Process unread messages using OAuth credentials set in env
-        await processUnreadGmailMessages();
-
-        return res.status(200).send('OK');
+        // Start processing but don't await here. Errors will be logged by the processor.
+        processUnreadGmailMessages().catch(err => console.error('Async processUnreadGmailMessages error:', err));
+        return;
     } catch (e) {
         console.error('Error handling Pub/Sub push:', e);
-        // Return non-200 so Pub/Sub retries if you prefer; here we return 500.
+        // If something unexpected happened before we could ack, return 500 so Pub/Sub may retry.
         return res.status(500).send('Processing Error');
     }
 });

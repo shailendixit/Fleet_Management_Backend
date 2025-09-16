@@ -52,3 +52,8 @@ Notes & security
 - Consider switching to Gmail OAuth2 for higher security in production; app passwords work but have limitations.
 
 If you want, I can add a `docker-compose.yml`, `pm2` config, and an example Render service setup file next.
+
+Pub/Sub push endpoint notes
+- The app exposes a Pub/Sub push webhook at `/api/gmail/push` which acknowledges (returns 200) immediately and processes Gmail messages asynchronously. This avoids Pub/Sub retry when processing takes longer than the ack deadline.
+- If you see repeated processing of the same email (e.g., InvoiceSheet being processed many times), it usually means the push endpoint either did not return 200 quickly or processing crashed before the message was marked read. With the latest changes the endpoint acks immediately and the processor marks messages as READ after successful processing.
+- For reliability: ensure the Render service URL is reachable over HTTPS, and the Pub/Sub subscription push endpoint is configured with the correct URL. Also set the subscription acknowledgement deadline long enough if you plan to process synchronously (default is 10 seconds).

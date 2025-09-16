@@ -17,12 +17,23 @@ async function sendMissingInvoiceAlert() {
 
         const html = `<p>The following assigned tasks are still missing invoiceId:</p><pre>${JSON.stringify(rows, null, 2)}</pre>`;
 
-        // Configure nodemailer transporter using Gmail SMTP (use app password)
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
-        });
+        // Configure or reuse a pooled nodemailer transporter to avoid creating
+        // a fresh SMTP connection for every alert (helps avoid ETIMEDOUT bursts).
+        if (!global.__missingInvoiceTransporter) {
+            global.__missingInvoiceTransporter = nodemailer.createTransport({
+                service: 'gmail',
+                pool: true,
+                maxConnections: 5,
+                maxMessages: 100,
+                auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+                // timeouts (ms)
+                connectionTimeout: 10000,
+                greetingTimeout: 5000,
+                socketTimeout: 10000
+            });
+        }
 
+        const transporter = global.__missingInvoiceTransporter;
         const info = await transporter.sendMail({
             from: process.env.ALERT_EMAIL_FROM,
             to: process.env.ALERT_EMAIL_TO,
@@ -30,7 +41,7 @@ async function sendMissingInvoiceAlert() {
             html
         });
 
-        console.log('Missing invoice alert sent:', info.messageId);
+        console.log('Missing invoice alert sent:', info && info.messageId);
     } catch (e) {
         console.error('Failed to send missing invoice alert:', e);
     }
@@ -106,7 +117,15 @@ async function getOAuth2Client() {
  * Fetch unread messages via Gmail API, parse and process attachments.
  * This method uses OAuth2 refresh token provided in env vars.
  */
+let __isProcessingUnread = false;
+const __processingMessageIds = new Set();
+
 async function processUnreadGmailMessages() {
+    if (__isProcessingUnread) {
+        console.log('Skipping processUnreadGmailMessages: already running');
+        return;
+    }
+    __isProcessingUnread = true;
     try {
         const auth = await getOAuth2Client();
         const gmail = google.gmail({ version: 'v1', auth });
@@ -117,6 +136,12 @@ async function processUnreadGmailMessages() {
         if (!messages.length) { console.log('No unread messages found via Gmail API'); return; }
 
         for (const m of messages) {
+            // Dedupe by message id to avoid concurrent re-processing
+            if (__processingMessageIds.has(m.id)) {
+                console.log('Skipping already-processing message', m.id);
+                continue;
+            }
+            __processingMessageIds.add(m.id);
             try {
                 const msg = await gmail.users.messages.get({ userId: 'me', id: m.id, format: 'raw' });
                 const raw = msg.data.raw;
@@ -127,10 +152,13 @@ async function processUnreadGmailMessages() {
                 // mark as read
                 await gmail.users.messages.modify({ userId: 'me', id: m.id, resource: { removeLabelIds: ['UNREAD'] } });
             } catch (e) { console.error('Error processing message', m.id, e); }
+            finally { __processingMessageIds.delete(m.id); }
         }
     } catch (e) {
         console.error('processUnreadGmailMessages error:', e);
         throw e;
+    } finally {
+        __isProcessingUnread = false;
     }
 }
 
