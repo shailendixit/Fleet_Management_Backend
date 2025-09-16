@@ -104,9 +104,36 @@ async function sendMissingInvoiceAlert() {
                 }
             }
         }
-        if (lastErr) throw lastErr;
+        if (lastErr) {
+            // Attempt Gmail API fallback before giving up (useful on platforms where SMTP is blocked)
+            try {
+                console.log('Attempting Gmail API fallback for missing invoice alert');
+                await sendMissingInvoiceAlertViaGmailAPI({ from: process.env.ALERT_EMAIL_FROM, to: process.env.ALERT_EMAIL_TO, subject: process.env.ALERT_EMAIL_SUBJECT, html, attachments });
+            } catch (apiErr) {
+                console.error('Gmail API fallback also failed:', apiErr);
+                throw lastErr; // throw original SMTP error for record
+            }
+        }
     } catch (e) {
         console.error('Failed to send missing invoice alert:', e);
+    }
+}
+
+// Fallback: build a raw MIME message and send via Gmail API (useful when SMTP is blocked)
+async function sendMissingInvoiceAlertViaGmailAPI({ from, to, subject, html, attachments }) {
+    try {
+        const auth = await getOAuth2Client();
+        const gmail = google.gmail({ version: 'v1', auth });
+        const MailComposer = require('nodemailer/lib/mail-composer');
+        const mail = new MailComposer({ from, to, subject, html, attachments });
+        const messageBuffer = await new Promise((resolve, reject) => mail.compile().build((err, msg) => err ? reject(err) : resolve(msg)));
+        const raw = messageBuffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const res = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+        console.log('Missing invoice alert sent via Gmail API:', res && res.data && res.data.id);
+        return res.data;
+    } catch (e) {
+        console.error('Gmail API fallback failed:', e);
+        throw e;
     }
 }
 
