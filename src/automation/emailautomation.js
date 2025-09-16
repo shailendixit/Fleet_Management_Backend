@@ -14,8 +14,50 @@ async function sendMissingInvoiceAlert() {
             console.log('No missing invoice rows');
             return;
         }
+        const html = `Check the attached file(s) for details tasks with missing InvoiceID.`;
 
-        const html = `<p>The following assigned tasks are still missing invoiceId:</p><pre>${JSON.stringify(rows, null, 2)}</pre>`;
+        // Build CSV content from rows
+        function escapeCsvField(val) {
+            if (val === null || val === undefined) return '';
+            const s = String(val);
+            // escape double quotes by doubling
+            if (s.indexOf(',') !== -1 || s.indexOf('\n') !== -1 || s.indexOf('"') !== -1) {
+                return '"' + s.replace(/"/g, '""') + '"';
+            }
+            return s;
+        }
+
+        const headers = Object.keys(rows[0] || {});
+        const csvLines = [];
+        if (headers.length) csvLines.push(headers.join(','));
+        for (const r of rows) {
+            const line = headers.map(h => escapeCsvField(r[h])).join(',');
+            csvLines.push(line);
+        }
+        const csvContent = csvLines.join('\n');
+        const csvBuffer = Buffer.from(csvContent, 'utf8');
+
+        // Try to create an Excel attachment if exceljs is available, else use CSV
+        let attachments = [
+            { filename: 'missing_invoices.csv', content: csvBuffer, contentType: 'text/csv' }
+        ];
+        try {
+            // optional dependency - if present we'll attach an xlsx as well
+            const ExcelJS = require('exceljs');
+            const workbook = new ExcelJS.Workbook();
+            const sheet = workbook.addWorksheet('MissingInvoices');
+            if (headers.length) sheet.addRow(headers);
+            for (const r of rows) {
+                const rowData = headers.map(h => r[h]);
+                sheet.addRow(rowData);
+            }
+            // generate buffer synchronously via promise
+            const xlsxBuffer = await workbook.xlsx.writeBuffer();
+            attachments.unshift({ filename: 'missing_invoices.xlsx', content: xlsxBuffer, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        } catch (e) {
+            // exceljs not present or failed - continue with CSV only
+            console.log('exceljs not available or failed to create xlsx; sending CSV only');
+        }
 
         // Configure or reuse a pooled nodemailer transporter to avoid creating
         // a fresh SMTP connection for every alert (helps avoid ETIMEDOUT bursts).
@@ -34,14 +76,35 @@ async function sendMissingInvoiceAlert() {
         }
 
         const transporter = global.__missingInvoiceTransporter;
-        const info = await transporter.sendMail({
-            from: process.env.ALERT_EMAIL_FROM,
-            to: process.env.ALERT_EMAIL_TO,
-            subject: process.env.ALERT_EMAIL_SUBJECT,
-            html
-        });
 
-        console.log('Missing invoice alert sent:', info && info.messageId);
+        // retry with exponential backoff on transient network errors
+        const maxAttempts = 3;
+        let lastErr;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const info = await transporter.sendMail({
+                    from: process.env.ALERT_EMAIL_FROM,
+                    to: process.env.ALERT_EMAIL_TO,
+                    subject: process.env.ALERT_EMAIL_SUBJECT,
+                    html,
+                    attachments
+                });
+                console.log('Missing invoice alert sent:', info && info.messageId);
+                lastErr = null;
+                break;
+            } catch (err) {
+                lastErr = err;
+                console.error(`Attempt ${attempt} to send missing invoice alert failed:`, err && err.code ? err.code : err);
+                // if final attempt, break and log
+                if (attempt < maxAttempts) {
+                    const wait = 1000 * Math.pow(2, attempt - 1);
+                    console.log(`Retrying sendMissingInvoiceAlert in ${wait}ms`);
+                    await new Promise(r => setTimeout(r, wait));
+                    continue;
+                }
+            }
+        }
+        if (lastErr) throw lastErr;
     } catch (e) {
         console.error('Failed to send missing invoice alert:', e);
     }
