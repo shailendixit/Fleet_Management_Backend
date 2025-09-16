@@ -6,8 +6,7 @@ app.use(cookieParser());
 
 app.use(express.json());
 
-// Enable CORS for all origins (adjust as needed for production)
-app.use(cors());
+
 
 app.use(
   cors({
