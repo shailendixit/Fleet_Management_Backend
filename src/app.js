@@ -6,25 +6,16 @@ app.use(cookieParser());
 
 app.use(express.json());
 
-// Configure allowed origins via env var FRONTEND_ORIGIN (comma-separated). Defaults to localhost dev origin.
-const frontendOrigins = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+// Enable CORS for all origins (adjust as needed for production)
+app.use(cors());
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // allow requests with no origin (like mobile apps, curl, server-to-server)
-    if (!origin) return callback(null, true);
-    if (frontendOrigins.indexOf(origin) !== -1) return callback(null, true);
-    return callback(new Error('CORS policy: This origin is not allowed: ' + origin));
-  },
-  credentials: true
-}));
-
-// Optionally allow the front-end to preflight any route
-app.options('*', cors());
-
+app.use(
+  cors({
+    origin: process.env.FRONTEND_ORIGIN, // replace with your frontend URL
+    methods: ["GET", "POST", "PUT", "DELETE"], // allowed methods
+    credentials: true, // if you need to send cookies/auth headers
+  })
+);
 
 const authRoutes= require('./modules/auth/auth.routes');
 const taskRoutes = require('./modules/task_assignments/task.routes');
