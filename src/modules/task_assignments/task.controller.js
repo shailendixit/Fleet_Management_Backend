@@ -368,3 +368,23 @@ exports.getAvailableDrivers = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch available drivers" });
   }
 };
+
+// Get tasks assigned to the currently authenticated driver (by username)
+exports.getMyAssignedTasks = async (req, res) => {
+  try {
+    const username = req.user && req.user.username;
+    if (!username) return res.status(400).json({ message: 'Invalid user context' });
+
+    const tasks = await prisma.assignedTask_DB.findMany({
+      where: {
+        driverName: username,
+        isCompleted: false,
+      },
+    });
+
+    return res.status(200).json(tasks);
+  } catch (err) {
+    console.error('Fetch My Assigned Tasks Error:', err);
+    return res.status(500).json({ message: 'Failed to fetch tasks' });
+  }
+};

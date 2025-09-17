@@ -15,13 +15,16 @@ router.post('/upload-invoice-excel', upload.single('file'), (req, res, next) => 
 // router.post('/upload-excel', upload.single('file'), taskController.uploadExcel);
 
 router.get("/getUnassignedTasks", authenticateToken, taskController.getUnassignedTasks);
-router.get("/getAvailableDrivers", authenticateToken, taskController.getAvailableDrivers);
+router.get("/getAvailableDrivers", taskController.getAvailableDrivers);
 
 // Get tasks in progress (not completed)
 router.get("/getTasksInProgress", authenticateToken, taskController.getTasksInProgress);
 
 // Get completed tasks (last 2 days)
 router.get("/getCompletedTasks", authenticateToken, taskController.getCompletedTasks);
+
+// Get tasks assigned to the logged-in driver
+router.get('/myTasks', authenticateToken, taskController.getMyAssignedTasks);
 
 // Assign tasks: create entries in AssignedTask_DB
 router.post('/assignTasks', authenticateToken,  taskController.assignTasks);

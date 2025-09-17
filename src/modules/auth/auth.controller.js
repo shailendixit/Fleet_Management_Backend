@@ -4,11 +4,11 @@ const bcrypt= require("bcryptjs");
 const prisma = require('../../lib/prisma');
 
 exports.signup= async(req,res)=>{
-    const {username,email,password}= req.body;
+    const {username,email,password, role} = req.body;
     try{
         const hashedPassword= await bcrypt.hash(password,10);
         const user= await prisma.User_Db.create({
-            data: {username,email,password: hashedPassword}
+            data: {username,email,password: hashedPassword, role: role || 'admin'}
         });
         return res.status(201).json({message: "user created successfully", user});
     }catch(error){
@@ -30,7 +30,7 @@ exports.login= async(req,res)=>{
         }
 
         //Generate JWT
-        const token= jwt.sign({id: user.id, username: user.username},
+        const token= jwt.sign({id: user.id, username: user.username, role: user.role},
             process.env.JWT_SECRET,
             {expiresIn: "10h"}
         )

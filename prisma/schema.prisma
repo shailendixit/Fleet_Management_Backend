@@ -71,6 +71,7 @@ model User_Db {
   username    String   @unique
   email       String   @unique
   password    String
+  role     String     @default("admin")
 }
 
 
