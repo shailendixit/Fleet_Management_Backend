@@ -19,6 +19,7 @@ app.use(
 const authRoutes= require('./modules/auth/auth.routes');
 const taskRoutes = require('./modules/task_assignments/task.routes');
 const gmailRoutes = require('./modules/gmail/gmail.routes');
+const driverRoutes = require('./modules/driver/driver.routes');
 
 //All API routes for authentication
 app.use('/api/auth', authRoutes);
@@ -28,6 +29,9 @@ app.use('/api/tasks', taskRoutes);
 
 // Gmail Pub/Sub push endpoint
 app.use('/api/gmail', gmailRoutes);
+
+// Driver-specific endpoints (start/complete assignment)
+app.use('/api/driver', driverRoutes);
 
 app.get('/', (req, res) => {
   res.send('Welcome to the Task Assignment API');   

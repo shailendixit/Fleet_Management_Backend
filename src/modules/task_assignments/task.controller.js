@@ -55,9 +55,12 @@ exports.uploadExcel = async (req, res) => {
   lineNumber: row["Line Number"] ? Number(row["Line Number"]) : null,
 }));
 
+    // Filter out rows that do not have an Order Number (required)
+    const withOrderNumber = formatted.filter(r => r.orderNumber !== null && typeof r.orderNumber !== 'undefined');
+
     // Bulk insert
     await prisma.task_DB.createMany({
-      data: formatted,
+      data: withOrderNumber,
       skipDuplicates: true, // prevents error if same row already exists
     });
 
@@ -187,6 +190,7 @@ exports.assignTasks = async (req, res) => {
           truckType: t.truckType || null,
           invoiceId: t.invoiceId || null,
           manifestNo: t.manifestNo || null,
+          status: 'Not Started',
         };
 
         await tx.assignedTask_DB.create({ data: assignedRecord });

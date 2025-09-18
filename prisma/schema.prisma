@@ -58,6 +58,8 @@ enum Status {
   unavailable
 }
 
+
+
 model Driver_Db {
   driverId          Int      @id @default(autoincrement())
   truckNo     Int?
@@ -116,6 +118,7 @@ model AssignedTask_DB {
   cubic               Float?   @map("Cubic (m3)")
   driverName          String?  @map("Drivers Name")
   truckType           String?  @map("Truck")
+  status              String?  @default("Not Started")
   assignedAt         DateTime @default(now())
   invoiceId          String? 
   manifestNo         String? 
