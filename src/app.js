@@ -8,13 +8,25 @@ app.use(express.json());
 
 
 
+const allowedOrigins = [
+  "http://localhost:8081",
+  process.env.FRONTEND_URL,
+];
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_ORIGIN, // replace with your frontend URL
-    methods: ["GET", "POST", "PUT", "DELETE"], // allowed methods
-    credentials: true, // if you need to send cookies/auth headers
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
   })
 );
+
 
 const authRoutes= require('./modules/auth/auth.routes');
 const taskRoutes = require('./modules/task_assignments/task.routes');
