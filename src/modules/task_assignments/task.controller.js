@@ -358,6 +358,33 @@ exports.uploadInvoiceExcel = async (req, res) => {
   }
 };
 
+exports.getAssignedTasks = async (req, res) => {
+    try {
+        const prisma = require('../../lib/prisma');
+        const { truckId, truckNo } = req.query;
+
+        // Build where clause only with provided filters
+        const where = {};
+        if (truckId) where.truckId = String(truckId);
+        if (truckNo) {
+            const tn = Number(truckNo);
+            if (!Number.isNaN(tn)) where.truckNo = tn;
+        }
+
+        // If no filter provided, this will return all assigned tasks (limit to sane number)
+        const tasks = await prisma.assignedTask_DB.findMany({
+            where,
+            orderBy: { assignedAt: 'desc' },
+            take: 200
+        });
+
+        return res.status(200).json({ tasks });
+    } catch (err) {
+        console.error('getAssignedTasks error:', err);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
 // ----------------- FETCH DRIVER DATA -----------------
 exports.getAvailableDrivers = async (req, res) => {
   try {
