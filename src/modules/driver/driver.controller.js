@@ -62,7 +62,15 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
 
   // If using delegated refresh token, upload to the current user's drive (/me/drive)
   if (process.env.ONEDRIVE_REFRESH_TOKEN) {
-    const encodedPath = encodeURIComponent(`${folder}/${filename}`);
+// get today's date in dd-mm-yyyy
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2, "0");
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const yyyy = today.getFullYear();
+  const dateFolder = `${dd}-${mm}-${yyyy}`;
+
+  // final path → FleetPODs/dateFolder/filename.pdf
+  const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
     const uploadUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodedPath}:/content`;
     const res = await axios.put(uploadUrl, pdfBuffer, {
       headers: {
@@ -73,6 +81,28 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
       maxContentLength: Infinity,
       timeout: 60000
     });
+
+ const fileId = res.data.id;
+
+    // Step 2: Create sharing link (public)
+    const linkRes = await axios.post(
+      `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/createLink`,
+      {
+        type: "view",       // "view" makes it read-only
+        scope: "anonymous", // anonymous = public link
+      },
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+
+    // Return both file metadata and permanent public URL
+    return {
+      ...res.data,
+      publicUrl: linkRes.data.link.webUrl, // <— Use this instead of downloadUrl
+    };
+
+
     return res.data;
   }
 
@@ -277,13 +307,13 @@ async function completeAssignment(req, res) {
   const pdfBuffer = await buildPdfBuffer({ podImageBuffer, invoiceImageBuffer, checklist });
 
     // prepare filename
-    const now = new Date();
-const day = String(now.getDate()).padStart(2, '0');
-const month = String(now.getMonth() + 1).padStart(2, '0');
-const year = now.getFullYear();
+const now = new Date();
+const hours = String(now.getHours()).padStart(2, '0');
+const minutes = String(now.getMinutes()).padStart(2, '0');
+const seconds = String(now.getSeconds()).padStart(2, '0');
 
-const dateStr = `${day}-${month}-${year}`;
-const filename = `POD_${invoiceId}_${dateStr}.pdf`;
+const timeStr = `${hours}-${minutes}-${seconds}`;
+const filename = `POD_${invoiceId}_${timeStr}.pdf`;
 
     // upload to OneDrive
     let uploadResult;
@@ -294,7 +324,7 @@ const filename = `POD_${invoiceId}_${dateStr}.pdf`;
       return res.status(500).json({ error: 'Failed to upload PDF to OneDrive', details: e.message || e });
     }
 
-    const podUrl = uploadResult['@microsoft.graph.downloadUrl'] || uploadResult.webUrl || uploadResult.id || null;
+    const podUrl = uploadResult.publicUrl || uploadResult.webUrl || uploadResult.id || null;
 
     // move the assigned task to completed task in DB (transaction)
     const atId = Number(assignedTaskId);
