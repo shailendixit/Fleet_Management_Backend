@@ -12,7 +12,9 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google-cloud/pubsub": "^4.6.0",
     "@prisma/client": "^6.13.0",
+    "axios": "^1.12.2",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -20,13 +22,14 @@
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "googleapis": "^159.0.0",
-  "@google-cloud/pubsub": "^4.6.0",
     "imap-simple": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.7.4",
     "multer": "^2.0.2",
     "nodemailer": "^6.9.3",
+    "pdfkit": "^0.17.2",
     "prisma": "^6.13.0",
+    "stream": "^0.0.3",
     "xlsx": "^0.18.5"
   }
 }

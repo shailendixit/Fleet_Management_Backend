@@ -167,5 +167,6 @@ model CompletedTask_DB {
   invoiceId          String? @unique
   manifestNo         String? 
   POD               String?
+  InvoiceImage     String?
   completedAt       DateTime @default(now())
 }
