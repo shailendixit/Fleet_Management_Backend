@@ -207,7 +207,7 @@ async function startAssignment(req, res) {
 
     const data = {};
     if (truckNo !== undefined) data.truckNo = Number(truckNo);
-    data.status = 'started';
+    data.status = 'Started';
 
     const updated = await prisma.assignedTask_DB.update({
       where: { assignedTaskId: Number(assignedTaskId) },
