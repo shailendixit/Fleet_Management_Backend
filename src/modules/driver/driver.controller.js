@@ -390,8 +390,74 @@ const filename = `POD_${invoiceId}_${timeStr}.pdf`;
   }
 }
 
+
+async function driverSignup (req, res){
+    const { truckNo, cubic, driverName, truckType, status, username, password } = req.body;
+
+    try {
+
+        const driver = await prisma.Driver_Db.create({
+            data: {
+                truckNo,
+                cubic,
+                driverName,
+                truckType,
+                status: status || 'available',
+                username,
+                password: password,
+            },
+        });
+
+        return res.status(201).json({
+            message: "Driver created successfully",
+            driver
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        if (error.code === "P2002") { // Prisma unique constraint error
+            return res.status(400).json({ message: "Username already exists" });
+        }
+
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+async function driverLogin(req, res) {
+    const { username, password } = req.body;
+
+    try {
+        const driver = await prisma.Driver_Db.findUnique({
+            where: { username }
+        });
+
+        if (!driver) {
+            return res.status(404).json({ message: "Driver not found" });
+        }
+        if (password != driver.password) {
+            return res.status(401).json({ message: "Invalid credentials" });
+        }
+
+        // Just return truckNo instead of token
+        return res.status(200).json({
+            message: "Login successful",
+            truckNo: driver.truckNo
+        });
+
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+
 module.exports = {
   startAssignment,
-  completeAssignment
-  , getOnedriveAuthUrl, exchangeOnedriveCode, testOneDriveUpload
+  completeAssignment,
+  getOnedriveAuthUrl,
+  exchangeOnedriveCode,
+  testOneDriveUpload,
+  driverSignup,
+  driverLogin
 };

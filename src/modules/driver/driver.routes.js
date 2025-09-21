@@ -31,4 +31,7 @@ router.post(
   driverController.completeAssignment
 );
 
+router.post('/driverLogin', driverController.driverLogin);
+router.post('/driverSignup', driverController.driverSignup);
+
 module.exports = router;

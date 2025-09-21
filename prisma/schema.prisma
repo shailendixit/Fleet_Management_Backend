@@ -67,6 +67,8 @@ model Driver_Db {
   driverName  String?  @map("Drivers Name")
   truckType   String?  @map("Truck")
   status      Status   @default(available)
+  username    String?  @unique
+  password    String?
 }
 model User_Db {
   id          Int      @id @default(autoincrement())
