@@ -128,6 +128,7 @@ model AssignedTask_DB {
 }
 
 model CompletedTask_DB {
+  completedTaskId    Int      @id @default(autoincrement())
     taskId             Int      @unique
   orderCo              Float?
   orTy                 String?
