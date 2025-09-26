@@ -2,6 +2,17 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const prisma = require('../../lib/prisma');
 
+function sanitizeRow(row) {
+  const safeNumber = (val) => {
+    const n = Number(val);
+    return isNaN(n) ? null : n;
+  };
+
+  const safeDate = (val) => {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
 // ----------------- POPULATE TASK DB -----------------
 exports.uploadExcel = async (req, res) => {
   try {
@@ -37,7 +48,7 @@ exports.uploadExcel = async (req, res) => {
   truckId: row["Truck I.D."] || null,
   location: row["Location"] || null,
   scheduledPickTime: row["Scheduled Pick Time"] ? Number(row["Scheduled Pick Time"]) : null,
-  requestDate: row["Request Date"] ? new Date(row["Request Date"]) : null,
+  requestDate: safeDate(row["Request Date"]),
   soldTo: row["Sold To"] ? Number(row["Sold To"]) : null,
   shipTo: row["Ship To"] ? Number(row["Ship To"]) : null,
   deliverTo: row["Deliver To"] ? Number(row["Deliver To"]) : null,
@@ -274,89 +285,137 @@ exports.updateInvoiceManifest = async (req, res) => {
 };
 
 // Upload invoice Excel and update AssignedTask_DB records by orderNumber
+// Upload invoice Excel and update AssignedTask_DB records by orderNumber
 exports.uploadInvoiceExcel = async (req, res) => {
   try {
     if (!req.file || (!req.file.path && !req.file.buffer)) {
-      return res.status(400).json({ message: 'file required' });
+      return res.status(400).json({ message: "file required" });
     }
 
     let workbook;
     if (req.file.buffer) {
-      workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+      workbook = xlsx.read(req.file.buffer, { type: "buffer" });
     } else {
-      const filePath = req.file.path;
-      workbook = xlsx.readFile(filePath);
+      workbook = xlsx.readFile(req.file.path);
     }
-    const sheetName = workbook.SheetNames[0];
-    const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    // Normalize header keys to lowercase for flexible matching
-    const normalize = key => (key || '').toString().trim().toLowerCase();
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) {
+      return res.status(400).json({ message: "Excel file has no sheets" });
+    }
+
+    const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    const normalize = (key) => (key || "").toString().trim().toLowerCase();
+
+    // Collect updates (batch by orderNumber to reduce DB hits)
+    const updates = {};
 
     for (const row of rows) {
-      // find keys for order number, document number (invoice), manifest
-      const keys = Object.keys(row);
-      let orderValue;
-      let invoiceValue;
-      let manifestValue;
+      try {
+        const keys = Object.keys(row);
+        let orderValue, invoiceValue, manifestValue;
 
-      for (const k of keys) {
-        const nk = normalize(k);
-        const v = row[k];
-        if (!v && v !== 0) continue;
-        if (nk.includes('order') && nk.includes('number')) {
-          orderValue = v;
-        } else if (nk === 'order number' || nk === 'ordernumber' || nk === 'orderno' || nk === 'order no') {
-          orderValue = v;
-        } else if (nk.includes('document') && nk.includes('number')) {
-          invoiceValue = v;
-        } else if (nk.includes('invoice') || nk.includes('document')) {
-          // prefer explicit invoice headers too
-          invoiceValue = invoiceValue || v;
-        } else if (nk.includes('manifest')) {
-          manifestValue = v;
+        for (const k of keys) {
+          const nk = normalize(k);
+          const v = row[k];
+          if (!v && v !== 0) continue;
+
+          if (nk.includes("order") && nk.includes("number")) {
+            orderValue = v;
+          } else if (
+            nk === "order number" ||
+            nk === "ordernumber" ||
+            nk === "orderno" ||
+            nk === "order no"
+          ) {
+            orderValue = v;
+          } else if (nk.includes("document") && nk.includes("number")) {
+            invoiceValue = v;
+          } else if (nk.includes("invoice") || nk.includes("document")) {
+            invoiceValue = invoiceValue || v;
+          } else if (nk.includes("manifest")) {
+            manifestValue = v;
+          }
         }
+
+        // fallback attempts
+        if (!orderValue) {
+          orderValue =
+            row["Order Number"] ||
+            row["orderNumber"] ||
+            row["OrderNo"] ||
+            row["Order No"];
+        }
+        if (!invoiceValue) {
+          invoiceValue =
+            row["Document Number"] ||
+            row["DocumentNumber"] ||
+            row["Invoice No"] ||
+            row["InvoiceNumber"];
+        }
+        if (!manifestValue) {
+          manifestValue =
+            row["Manifest Number"] || row["ManifestNo"] || row["Manifest"];
+        }
+
+        if (!orderValue) continue; // nothing to match
+
+        // sanitize order number
+        const orderNum =
+          typeof orderValue === "number"
+            ? orderValue
+            : parseFloat(String(orderValue).replace(/[^0-9.-]+/g, ""));
+        if (isNaN(orderNum)) continue;
+
+        const invoiceStr = invoiceValue != null ? String(invoiceValue) : null;
+        const manifestStr = manifestValue != null ? String(manifestValue) : null;
+
+        if (!invoiceStr && !manifestStr) continue;
+
+        // Merge updates for same orderNumber (avoid duplicate DB calls)
+        if (!updates[orderNum]) updates[orderNum] = {};
+        if (invoiceStr) updates[orderNum].invoiceId = invoiceStr;
+        if (manifestStr) updates[orderNum].manifestNo = manifestStr;
+      } catch (rowErr) {
+        console.error("Row parse error:", rowErr);
+        continue; // skip bad row but continue processing
       }
-
-      // fallback attempts: try common keys
-      if (!orderValue) {
-        orderValue = row['Order Number'] || row['orderNumber'] || row['OrderNo'] || row['Order No'];
-      }
-      if (!invoiceValue) {
-        invoiceValue = row['Document Number'] || row['DocumentNumber'] || row['Invoice No'] || row['InvoiceNumber'];
-      }
-      if (!manifestValue) {
-        manifestValue = row['Manifest Number'] || row['ManifestNo'] || row['Manifest Number'];
-      }
-
-      if (!orderValue) continue; // nothing to match
-
-      // parse order as number if possible
-      const orderNum = typeof orderValue === 'number' ? orderValue : parseFloat(String(orderValue).replace(/[^0-9.-]+/g, ''));
-      const invoiceStr = invoiceValue != null ? String(invoiceValue) : null;
-      const manifestStr = manifestValue != null ? String(manifestValue) : null;
-
-      const data = {};
-      if (invoiceStr) data.invoiceId = invoiceStr;
-      if (manifestStr) data.manifestNo = manifestStr;
-      if (Object.keys(data).length === 0) continue; // nothing to update
-
-      // Update all AssignedTask_DB rows with matching orderNumber
-      await prisma.assignedTask_DB.updateMany({
-        where: { orderNumber: orderNum },
-        data,
-      });
     }
 
-  // cleanup file if path used
-  try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
+    // Apply updates in batch
+    let updatedCount = 0;
+    for (const [orderNum, data] of Object.entries(updates)) {
+      try {
+        const result = await prisma.assignedTask_DB.updateMany({
+          where: { orderNumber: parseFloat(orderNum) },
+          data,
+        });
+        updatedCount += result.count || 0;
+      } catch (dbErr) {
+        console.error(`DB update failed for order ${orderNum}:`, dbErr);
+      }
+    }
 
-    return res.status(200).json({ message: 'Invoice sheet processed' });
+    // cleanup file if path used
+    try {
+      if (req.file && req.file.path) fs.unlinkSync(req.file.path);
+    } catch (e) {
+      console.warn("File cleanup failed:", e);
+    }
+
+    return res.status(200).json({
+      message: "Invoice sheet processed",
+      updated: updatedCount,
+      totalOrders: Object.keys(updates).length,
+    });
   } catch (err) {
-    console.error('Upload Invoice Error:', err);
-    return res.status(500).json({ message: 'Failed to process invoice sheet' });
+    console.error("Upload Invoice Error:", err);
+    return res
+      .status(500)
+      .json({ message: "Failed to process invoice sheet" });
   }
 };
+
 
 exports.getAssignedTasks = async (req, res) => {
     try {
@@ -419,3 +478,4 @@ exports.getMyAssignedTasks = async (req, res) => {
     return res.status(500).json({ message: 'Failed to fetch tasks' });
   }
 };
+}

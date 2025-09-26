@@ -157,14 +157,14 @@ async function processParsedEmail(parsed) {
             const lower = attachment.filename.toLowerCase();
             if (!(lower.endsWith('.xlsx') || lower.endsWith('.xls'))) continue;
 
-            if (subject.includes('tasksheet')) {
+            if (subject.toLowerCase().includes('tasksheet')) {
                 console.log('Detected TaskSheet -> calling uploadExcel in-process');
                 const fakeReq = { file: { buffer: attachment.content } };
                 const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadExcel result', c, b) }) };
                 try { await taskController.uploadExcel(fakeReq, fakeRes); }
                 catch (e) { console.error('uploadExcel failed:', e); }
 
-            } else if (subject.includes('invoicesheet')) {
+            } else if (subject.toLowerCase().includes('invoicesheet')) {
                 console.log('Detected InvoiceSheet -> calling uploadInvoiceExcel in-process');
                 const fakeReq = { file: { buffer: attachment.content } };
                 const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadInvoiceExcel result', c, b) }) };
