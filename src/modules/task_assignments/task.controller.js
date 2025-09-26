@@ -2,12 +2,6 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const prisma = require('../../lib/prisma');
 
-function sanitizeRow(row) {
-  const safeNumber = (val) => {
-    const n = Number(val);
-    return isNaN(n) ? null : n;
-  };
-
   const safeDate = (val) => {
     const d = new Date(val);
     return isNaN(d.getTime()) ? null : d;
@@ -478,4 +472,3 @@ exports.getMyAssignedTasks = async (req, res) => {
     return res.status(500).json({ message: 'Failed to fetch tasks' });
   }
 };
-}
