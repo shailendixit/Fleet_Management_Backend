@@ -60,55 +60,63 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
   const accessToken = await getGraphToken();
   const folder = process.env.ONEDRIVE_FOLDER || 'FleetPODs';
 
-  // If using delegated refresh token, upload to the current user's drive (/me/drive)
+  // Delegated token flow (/me/drive)
   if (process.env.ONEDRIVE_REFRESH_TOKEN) {
-// get today's date in dd-mm-yyyy
-  const today = new Date();
-  const dd = String(today.getDate()).padStart(2, "0");
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const yyyy = today.getFullYear();
-  const dateFolder = `${dd}-${mm}-${yyyy}`;
+    // Build date-based folder name
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2, "0");
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const yyyy = today.getFullYear();
+    const dateFolder = `${dd}-${mm}-${yyyy}`;
 
-  // final path → FleetPODs/dateFolder/filename.pdf
-  const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
+    // Final path → FleetPODs/dateFolder/filename.pdf
+    const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
     const uploadUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodedPath}:/content`;
+
+    // Step 1: Upload the PDF
     const res = await axios.put(uploadUrl, pdfBuffer, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/pdf'
+        "Content-Type": "application/pdf"
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
-      timeout: 60000
+      timeout: 300000 // allow large/slow uploads (5 min)
     });
 
- const fileId = res.data.id;
+    const fileId = res.data.id;
 
-    // Step 2: Create sharing link (public)
-    const linkRes = await axios.post(
-      `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/createLink`,
-      {
-        type: "view",       // "view" makes it read-only
-        scope: "anonymous", // anonymous = public link
-      },
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }
-    );
+    // Step 2: Try to create public link
+    let publicUrl = res.data.webUrl; // fallback to normal URL
+    try {
+      const linkRes = await retry(
+        () =>
+          axios.post(
+            `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/createLink`,
+            { type: "view", scope: "anonymous" },
+            {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              timeout: 15000 // short timeout (link creation is fast)
+            }
+          ),
+        3, // retries
+        2000 // delay between retries
+      );
+      publicUrl = linkRes.data.link.webUrl;
+    } catch (err) {
+      console.warn("createLink failed after retries:", err.message);
+    }
 
-    // Return both file metadata and permanent public URL
+    // Always return file metadata + a usable URL
     return {
       ...res.data,
-      publicUrl: linkRes.data.link.webUrl, // <— Use this instead of downloadUrl
+      publicUrl
     };
-
-
-    return res.data;
   }
 
-  // App-only fallback requires ONEDRIVE_USER_ID
+  // App-only flow requires ONEDRIVE_USER_ID
   const userId = process.env.ONEDRIVE_USER_ID;
-  if (!userId) throw new Error('ONEDRIVE_USER_ID env var is required for app-only flow');
+  if (!userId) throw new Error("ONEDRIVE_USER_ID env var is required for app-only flow");
 
   const encodedPath = encodeURIComponent(`${folder}/${filename}`);
   const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/${encodedPath}:/content`;
@@ -116,14 +124,28 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
   const res = await axios.put(uploadUrl, pdfBuffer, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/pdf'
+      "Content-Type": "application/pdf"
     },
     maxBodyLength: Infinity,
     maxContentLength: Infinity,
-    timeout: 60000
+    timeout: 300000
   });
+
   return res.data;
 }
+
+// Simple retry helper
+async function retry(fn, retries = 3, delay = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 
 function buildPdfBuffer({ podImageBuffer, invoiceImageBuffer, checklist }) {
   // Return a Promise that resolves when doc stream ends
