@@ -2,10 +2,19 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const prisma = require('../../lib/prisma');
 
-  const safeDate = (val) => {
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-  };
+ // Helpers
+function safeNumber(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const n = Number(val);
+  return isNaN(n) ? null : n;
+}
+
+function safeDate(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 
 // ----------------- POPULATE TASK DB -----------------
 exports.uploadExcel = async (req, res) => {
@@ -24,40 +33,40 @@ exports.uploadExcel = async (req, res) => {
 
     // Format rows according to Prisma Task schema
     const formatted = data.map(row => ({
-  orderCo: row["Order Co"] ? Number(row["Order Co"]) : null,
+  orderCo: safeNumber(row["Order Co"]),
   orTy: row["Or Ty"] || null,
-  orderNumber: row["Order Number"] ? Number(row["Order Number"]) : null,
+  orderNumber: safeNumber(row["Order Number"]),
   branchPlant: row["Branch Plant"] || null,
-  customerPO: row["Customer PO"] ? String(row["Customer PO"]) : null, // this one can be string
+  customerPO: row["Customer PO"] ? String(row["Customer PO"]) : null, // string-safe
   suburbTown: row["Suburb/Town"] || null,
   name: row["Name"] || null,
   description: row["Description"] || null,
-  quantityShipped: row["Quantity Shipped"] ? Number(row["Quantity Shipped"]) : null,
-  itemNumber: row["Item Number"] ? Number(row["Item Number"]) : null,
-  postalCode: row["Postal Code"] ? Number(row["Postal Code"]) : null,
-  revNbr: row["Rev Nbr"] ? Number(row["Rev Nbr"]) : null,
+  quantityShipped: safeNumber(row["Quantity Shipped"]),
+  itemNumber: safeNumber(row["Item Number"]),
+  postalCode: safeNumber(row["Postal Code"]),
+  revNbr: safeNumber(row["Rev Nbr"]),
   revisionReason: row["Revision Reason"] || null,
   routeCode: row["Route Code"] || null,
-  schedPick: row["Sched Pick"] ? new Date(row["Sched Pick"]) : null,
+  schedPick: safeDate(row["Sched Pick"]),
   truckId: row["Truck I.D."] || null,
   location: row["Location"] || null,
-  scheduledPickTime: row["Scheduled Pick Time"] ? Number(row["Scheduled Pick Time"]) : null,
+  scheduledPickTime: safeNumber(row["Scheduled Pick Time"]),
   requestDate: safeDate(row["Request Date"]),
-  soldTo: row["Sold To"] ? Number(row["Sold To"]) : null,
-  shipTo: row["Ship To"] ? Number(row["Ship To"]) : null,
-  deliverTo: row["Deliver To"] ? Number(row["Deliver To"]) : null,
+  soldTo: safeNumber(row["Sold To"]),
+  shipTo: safeNumber(row["Ship To"]),
+  deliverTo: safeNumber(row["Deliver To"]),
   stateCode: row["State Code"] || null,
   lnTy: row["Ln Ty"] || null,
   descriptionLine2: row["Description Line 2"] || null,
   zoneNo: row["Zone No."] || null,
   stopCode: row["Stop Code"] || null,
-  nextStat: row["Next Stat"] ? Number(row["Next Stat"]) : null,
-  lastStat: row["Last Stat"] ? Number(row["Last Stat"]) : null,
-  priority: row["Priority (1/0)"] ? Number(row["Priority (1/0)"]) : null,
-  futureQtyCommitted: row["Future Qty Committed"] ? Number(row["Future Qty Committed"]) : null,
-  quantityOrdered: row["Quantity Ordered"] ? Number(row["Quantity Ordered"]) : null,
+  nextStat: safeNumber(row["Next Stat"]),
+  lastStat: safeNumber(row["Last Stat"]),
+  priority: safeNumber(row["Priority (1/0)"]),
+  futureQtyCommitted: safeNumber(row["Future Qty Committed"]),
+  quantityOrdered: safeNumber(row["Quantity Ordered"]),
   reasonCode: row["Reason Code"] || null,
-  lineNumber: row["Line Number"] ? Number(row["Line Number"]) : null,
+  lineNumber: safeNumber(row["Line Number"]),
 }));
 
     // Filter out rows that do not have an Order Number (required)
@@ -130,29 +139,20 @@ exports.assignTasks = async (req, res) => {
       return res.status(400).json({ message: 'tasks array required' });
     }
 
-    // Build creation payloads for AssignedTask_DB
-    const createData = tasks.map(t => {
-      const base = { taskId: t.taskId };
-      // copy possible fields if provided (minimal mapping)
-      if (t.truckNo) base.truckNo = t.truckNo;
-      if (t.cubic) base.cubic = t.cubic;
-      if (t.driverName) base.driverName = t.driverName;
-      if (t.truckType) base.truckType = t.truckType;
-      if (t.invoiceId) base.invoiceId = t.invoiceId;
-      if (t.manifestNo) base.manifestNo = t.manifestNo;
-      return base;
-    });
-
-    // Insert AssignedTask_DB entries (use createMany where possible)
     await prisma.$transaction(async (tx) => {
-      // create individual records so we can copy over task fields from Task_DB
-      for (const t of tasks) {
-        // fetch task row
-        const taskRow = await tx.task_DB.findUnique({ where: { taskId: t.taskId } });
-        if (!taskRow) continue; // skip invalid ids
+      // fetch all task rows in one query
+      const taskIds = tasks.map(t => t.taskId);
+      const taskRows = await tx.task_DB.findMany({
+        where: { taskId: { in: taskIds } },
+      });
 
-        // build record by copying fields from taskRow and merging provided driver fields
-        const assignedRecord = {
+      // build assigned task records
+      const assignedRecords = [];
+      for (const t of tasks) {
+        const taskRow = taskRows.find(row => row.taskId === t.taskId);
+        if (!taskRow) continue;
+
+        assignedRecords.push({
           taskId: taskRow.taskId,
           orderCo: taskRow.orderCo,
           orTy: taskRow.orTy,
@@ -188,7 +188,6 @@ exports.assignTasks = async (req, res) => {
           quantityOrdered: taskRow.quantityOrdered,
           reasonCode: taskRow.reasonCode,
           lineNumber: taskRow.lineNumber,
-          // driver fields (from request)
           truckNo: t.truckNo || null,
           cubic: t.cubic || null,
           driverName: t.driverName || null,
@@ -196,12 +195,16 @@ exports.assignTasks = async (req, res) => {
           invoiceId: t.invoiceId || null,
           manifestNo: t.manifestNo || null,
           status: 'Not Started',
-        };
+        });
+      }
 
-        await tx.assignedTask_DB.create({ data: assignedRecord });
+      if (assignedRecords.length > 0) {
+        await tx.assignedTask_DB.createMany({ data: assignedRecords });
 
-        // mark original task as assigned
-        await tx.task_DB.update({ where: { taskId: t.taskId }, data: { isassigned: true } });
+        await tx.task_DB.updateMany({
+          where: { taskId: { in: assignedRecords.map(r => r.taskId) } },
+          data: { isassigned: true },
+        });
       }
     });
 
@@ -211,6 +214,7 @@ exports.assignTasks = async (req, res) => {
     return res.status(500).json({ message: 'Failed to assign tasks' });
   }
 };
+
 
 // ----------------- FETCH TASK DATA -----------------
 exports.getTasksInProgress = async (req, res) => {

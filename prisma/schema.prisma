@@ -51,6 +51,7 @@ model Task_DB{
   reasonCode           String?
   lineNumber           Float?
   isassigned          Boolean  @default(false)
+    @@index([taskId])
 }
 
 enum Status {
@@ -125,6 +126,8 @@ model AssignedTask_DB {
   invoiceId          String? 
   manifestNo         String? 
   isCompleted       Boolean  @default(false)
+    @@index([orderNumber])
+    @@index([truckNo])
 }
 
 model CompletedTask_DB {

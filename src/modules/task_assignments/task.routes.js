@@ -27,7 +27,7 @@ router.get('/assigned', taskController.getAssignedTasks);
 router.get("/getCompletedTasks", authenticateToken, taskController.getCompletedTasks);
 
 // Get tasks assigned to the logged-in driver
-router.get('/myTasks', authenticateToken, taskController.getMyAssignedTasks);
+router.get('/myTasks', taskController.getMyAssignedTasks);
 
 // Assign tasks: create entries in AssignedTask_DB
 router.post('/assignTasks', authenticateToken,  taskController.assignTasks);
