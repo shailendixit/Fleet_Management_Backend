@@ -139,6 +139,7 @@ async function sendMissingInvoiceAlertViaGmailAPI({ from, to, subject, html, att
 
 // --- New helpers to support Gmail API driven processing (Pub/Sub push) ---
 const { google } = require('googleapis');
+const axios = require('axios');
 
 async function processParsedEmail(parsed) {
     try {
@@ -203,6 +204,42 @@ async function getOAuth2Client() {
     return oAuth2Client;
 }
 
+/* Microsoft Graph helpers (Outlook) */
+async function getOutlookGraphToken() {
+    // Prefer delegated refresh token if provided (for /me endpoints)
+    const clientId = process.env.OUTLOOK_CLIENT_ID || process.env.ONEDRIVE_CLIENT_ID;
+    const clientSecret = process.env.OUTLOOK_CLIENT_SECRET || process.env.ONEDRIVE_CLIENT_SECRET;
+    const tenant = process.env.OUTLOOK_TENANT_ID || process.env.ONEDRIVE_TENANT_ID;
+    const refreshToken = process.env.OUTLOOK_REFRESH_TOKEN; // optional delegated flow
+
+    if (refreshToken) {
+        if (!clientId || !clientSecret) throw new Error('OUTLOOK_CLIENT_ID and OUTLOOK_CLIENT_SECRET are required for refresh token flow');
+        const params = new URLSearchParams();
+        params.append('client_id', clientId);
+        params.append('client_secret', clientSecret);
+        params.append('grant_type', 'refresh_token');
+        params.append('refresh_token', refreshToken);
+        if (process.env.OUTLOOK_REDIRECT_URI) params.append('redirect_uri', process.env.OUTLOOK_REDIRECT_URI);
+        params.append('scope', 'offline_access openid profile Mail.ReadWrite');
+        const tokenUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/token`;
+        const tokenRes = await axios.post(tokenUrl, params.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 });
+        return { accessToken: tokenRes.data.access_token, delegated: true };
+    }
+
+    // App-only client credentials flow
+    if (!tenant || !clientId || !clientSecret) {
+        throw new Error('Missing OUTLOOK_CLIENT_ID / OUTLOOK_CLIENT_SECRET / OUTLOOK_TENANT_ID for app-only Graph token');
+    }
+    const params = new URLSearchParams();
+    params.append('client_id', clientId);
+    params.append('client_secret', clientSecret);
+    params.append('scope', 'https://graph.microsoft.com/.default');
+    params.append('grant_type', 'client_credentials');
+
+    const tokenRes = await axios.post(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, params.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 });
+    return { accessToken: tokenRes.data.access_token, delegated: false };
+}
+
 /**
  * Fetch unread messages via Gmail API, parse and process attachments.
  * This method uses OAuth2 refresh token provided in env vars.
@@ -217,32 +254,38 @@ async function processUnreadGmailMessages() {
     }
     __isProcessingUnread = true;
     try {
-        const auth = await getOAuth2Client();
-        const gmail = google.gmail({ version: 'v1', auth });
+        // Use Microsoft Graph to list unread messages and fetch raw MIME
+        const tokenInfo = await getOutlookGraphToken();
+        const accessToken = tokenInfo.accessToken;
 
-        // List unread messages
-        const listRes = await gmail.users.messages.list({ userId: 'me', q: 'is:unread' });
-        const messages = (listRes.data && listRes.data.messages) || [];
-        if (!messages.length) { console.log('No unread messages found via Gmail API'); return; }
+    // Build user path: 'me' for delegated tokens, otherwise 'users/{id}' for app-only
+    const userId = (process.env.OUTLOOK_USER_ID || process.env.ONEDRIVE_USER_ID) || null;
+    const userPath = tokenInfo.delegated ? 'me' : (userId ? `users/${userId}` : null);
+    if (!userPath) throw new Error('OUTLOOK_USER_ID or ONEDRIVE_USER_ID must be set for app-only Graph message access');
+
+    // Query unread messages
+    const listUrl = `https://graph.microsoft.com/v1.0/${userPath}/mailFolders/Inbox/messages?$filter=isRead eq false&$top=50`;
+        const listRes = await axios.get(listUrl, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 20000 });
+        const messages = (listRes.data && listRes.data.value) || [];
+        if (!messages.length) { console.log('No unread messages found via Outlook Graph'); return; }
 
         for (const m of messages) {
-            // Dedupe by message id to avoid concurrent re-processing
-            if (__processingMessageIds.has(m.id)) {
-                console.log('Skipping already-processing message', m.id);
-                continue;
-            }
-            __processingMessageIds.add(m.id);
+            const msgId = m.id;
+            if (__processingMessageIds.has(msgId)) { console.log('Skipping already-processing message', msgId); continue; }
+            __processingMessageIds.add(msgId);
             try {
-                const msg = await gmail.users.messages.get({ userId: 'me', id: m.id, format: 'raw' });
-                const raw = msg.data.raw;
-                if (!raw) continue;
-                const buffer = Buffer.from(raw, 'base64');
+                // Get MIME content (raw) — requires the $value endpoint
+                // endpoint: /users/{id}/messages/{id}/$value
+                const getUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(msgId)}/$value`;
+                const msgRes = await axios.get(getUrl, { headers: { Authorization: `Bearer ${accessToken}` }, responseType: 'arraybuffer', timeout: 20000 });
+                const buffer = Buffer.from(msgRes.data);
                 await processRawBuffer(buffer);
 
-                // mark as read
-                await gmail.users.messages.modify({ userId: 'me', id: m.id, resource: { removeLabelIds: ['UNREAD'] } });
-            } catch (e) { console.error('Error processing message', m.id, e); }
-            finally { __processingMessageIds.delete(m.id); }
+                // Mark message as read
+                const patchUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(msgId)}`;
+                await axios.patch(patchUrl, { isRead: true }, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: 10000 });
+            } catch (e) { console.error('Error processing message', msgId, e?.response?.data || e.message || e); }
+            finally { __processingMessageIds.delete(msgId); }
         }
     } catch (e) {
         console.error('processUnreadGmailMessages error:', e);
@@ -256,21 +299,120 @@ async function processUnreadGmailMessages() {
  * Start Gmail watch so Gmail publishes notifications to a Pub/Sub topic.
  * Requires GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET, GMAIL_OAUTH_REFRESH_TOKEN, and PUBSUB_TOPIC_NAME env vars.
  */
+/**
+ * startWatch for Outlook: create a subscription for mailbox notifications if OUTLOOK_SUBSCRIPTION_URL is provided.
+ * If you prefer polling instead, the server should call `processUnreadGmailMessages` (now polls Outlook) when notified.
+ */
 async function startWatch() {
     try {
-        const topicName = process.env.GMAIL_PUBSUB_TOPIC_NAME || process.env.GMAIL_PUBSUB_TOPIC;
-        if (!topicName) throw new Error('PUBSUB_TOPIC_NAME (or GMAIL_PUBSUB_TOPIC) env var is required');
+        const notifyUrl = process.env.OUTLOOK_SUBSCRIPTION_NOTIFICATION_URL; // public HTTPS endpoint that Graph will call
+        if (!notifyUrl) {
+            console.log('OUTLOOK_SUBSCRIPTION_NOTIFICATION_URL not set; skipping Graph subscription creation (use polling)');
+            return null;
+        }
 
-        const auth = await getOAuth2Client();
-        const gmail = google.gmail({ version: 'v1', auth });
+        const tokenInfo = await getOutlookGraphToken();
+        const accessToken = tokenInfo.accessToken;
 
-        console.log('Registering Gmail watch on topic:', topicName);
-        const res = await gmail.users.watch({ userId: 'satkaushik131@gmail.com', requestBody: { topicName } });
-        console.log('Gmail watch registered:', res.data);
+        // Build userPath used in resource and endpoints
+        const userId = (process.env.OUTLOOK_USER_ID || process.env.ONEDRIVE_USER_ID) || null;
+        const userPath = tokenInfo.delegated ? 'me' : (userId ? `users/${userId}` : null);
+        if (!userPath) throw new Error('OUTLOOK_USER_ID or ONEDRIVE_USER_ID must be set for creating Graph subscriptions');
+
+        // Create subscription with retries and start renewal loop
+        try {
+            const subscription = await createGraphSubscriptionWithRetry({ accessToken, userPath, notifyUrl });
+            if (subscription) scheduleSubscriptionRenewal(subscription);
+            return subscription;
+        } catch (e) {
+            console.error('Failed to create Graph subscription after retries:', e?.response?.data || e.message || e);
+            return null;
+        }
     } catch (e) {
-        console.error('Failed to start Gmail watch:', e);
-        throw e;
+        console.error('Failed to start Outlook Graph subscription:', e?.response?.data || e.message || e);
+        // don't throw so startup can continue
+        return null;
     }
+}
+
+// --- subscription helpers ---
+async function retryAsync(fn, attempts = 3, baseDelay = 2000) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+        try {
+            return await fn();
+        } catch (e) {
+            lastErr = e;
+            const wait = baseDelay * Math.pow(2, i);
+            console.warn(`Attempt ${i + 1} failed; retrying in ${wait}ms`, e?.response?.status || e?.code || e?.message);
+            await new Promise(r => setTimeout(r, wait));
+        }
+    }
+    throw lastErr;
+}
+
+async function createGraphSubscriptionWithRetry({ accessToken, userPath, notifyUrl }) {
+    const create = async () => {
+        const subReq = {
+            changeType: 'created',
+            notificationUrl: notifyUrl,
+            resource: `${userPath}/mailFolders('Inbox')/messages`,
+            expirationDateTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            clientState: process.env.OUTLOOK_SUBSCRIPTION_CLIENT_STATE || 'fleet_state'
+        };
+        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
+        const res = await axios.post('https://graph.microsoft.com/v1.0/subscriptions', subReq, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs });
+        const subscription = res.data;
+        global.__graphSubscription = global.__graphSubscription || {};
+        global.__graphSubscription.info = subscription;
+        console.log('Graph subscription created:', subscription.id, subscription.expirationDateTime);
+        return subscription;
+    };
+    return await retryAsync(create, Number(process.env.OUTLOOK_SUBSCRIPTION_CREATE_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
+}
+
+function scheduleSubscriptionRenewal(subscription) {
+    try {
+        if (!subscription || !subscription.expirationDateTime) return;
+        const exp = Date.parse(subscription.expirationDateTime);
+        const renewBeforeMs = Number(process.env.OUTLOOK_SUBSCRIPTION_RENEW_BEFORE_MS || 5 * 60 * 1000);
+        let msUntilRenew = exp - Date.now() - renewBeforeMs;
+        if (msUntilRenew <= 0) msUntilRenew = 30 * 1000;
+
+        if (global.__graphSubscription && global.__graphSubscription.renewTimer) {
+            clearTimeout(global.__graphSubscription.renewTimer);
+        }
+        global.__graphSubscription = global.__graphSubscription || {};
+        global.__graphSubscription.info = subscription;
+        global.__graphSubscription.renewTimer = setTimeout(async () => {
+            try {
+                const tokenInfo = await getOutlookGraphToken();
+                await renewGraphSubscriptionWithRetry({ accessToken: tokenInfo.accessToken, subscriptionId: subscription.id });
+            } catch (e) {
+                console.error('Subscription renewal failed, will retry scheduling again:', e?.response?.data || e?.message || e);
+                // schedule a short retry
+                setTimeout(() => scheduleSubscriptionRenewal(subscription), 30 * 1000);
+            }
+        }, msUntilRenew);
+        console.log(`Scheduled subscription renewal in ${Math.round(msUntilRenew / 1000)}s for subscription ${subscription.id}`);
+    } catch (e) {
+        console.error('Failed to schedule subscription renewal:', e);
+    }
+}
+
+async function renewGraphSubscriptionWithRetry({ accessToken, subscriptionId }) {
+    const renew = async () => {
+        const newExpiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
+        const res = await axios.patch(`https://graph.microsoft.com/v1.0/subscriptions/${encodeURIComponent(subscriptionId)}`, { expirationDateTime: newExpiry }, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs });
+        const updated = res.data || { expirationDateTime: newExpiry };
+        console.log('Subscription renewed:', subscriptionId, 'new expiry:', updated.expirationDateTime || newExpiry);
+        if (!global.__graphSubscription) global.__graphSubscription = {};
+        global.__graphSubscription.info = Object.assign({}, global.__graphSubscription.info || {}, { expirationDateTime: updated.expirationDateTime || newExpiry });
+        scheduleSubscriptionRenewal(global.__graphSubscription.info);
+        return updated;
+    };
+    return await retryAsync(renew, Number(process.env.OUTLOOK_SUBSCRIPTION_RENEW_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
 }
 
 

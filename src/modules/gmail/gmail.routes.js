@@ -2,30 +2,42 @@ const express = require('express');
 const router = express.Router();
 const { processUnreadGmailMessages } = require('../../automation/emailautomation');
 
-// Pub/Sub push endpoint. Cloud Pub/Sub will POST JSON to this endpoint.
-// Expects body like { message: { data: '<base64>' }, subscription: 'projects/..../subscriptions/..' }
+// Push endpoint used by Gmail Pub/Sub or Outlook Graph subscription notifications.
+// Both simply acknowledge quickly and trigger async processing (polling) of unread messages.
+// Accept POST (Graph sends POST during validation) and GET (tunnels or tests may use GET) for validation
 router.post('/push', async (req, res) => {
     try {
-        const body = req.body;
-        if (!body || !body.message) {
-            console.log('Invalid Pub/Sub push received');
-            return res.status(400).send('Bad Request');
+        // Microsoft Graph subscription validation: Graph may send a validationToken either
+        // as a query parameter or in the body. If present, echo it back as plain text.
+        const validationToken = (req.query && req.query.validationToken) || (req.body && req.body.validationToken) || null;
+        if (validationToken) {
+            console.log('Received Graph validationToken (POST) from', req.ip || req.get('x-forwarded-for') || req.hostname);
+            res.set('Content-Type', 'text/plain');
+            return res.status(200).send(String(validationToken));
         }
 
-        // Ack immediately: return 200 to Pub/Sub so it does not retry while we process.
-        // Run processing asynchronously (fire-and-forget). This prevents duplicate
-        // processing when the handler takes longer than the Pub/Sub ack deadline.
-        console.log('Pub/Sub push received, acknowledged to Pub/Sub, starting async Gmail poll');
+        console.log('Mail push notification received — acknowledging and starting async poll');
+        // Ack immediately so the sender (Pub/Sub or Graph) doesn't retry
         res.status(200).send('OK');
 
-        // Start processing but don't await here. Errors will be logged by the processor.
+        // Trigger the mail poll/processor (now supports Outlook Graph via polling)
         processUnreadGmailMessages().catch(err => console.error('Async processUnreadGmailMessages error:', err));
         return;
     } catch (e) {
-        console.error('Error handling Pub/Sub push:', e);
-        // If something unexpected happened before we could ack, return 500 so Pub/Sub may retry.
+        console.error('Error handling mail push:', e);
         return res.status(500).send('Processing Error');
     }
+});
+
+// Also accept GET for quick validation tests (Graph can use POST; GET accepted for diagnostics)
+router.get('/push', (req, res) => {
+    const validationToken = req.query && req.query.validationToken;
+    if (validationToken) {
+        console.log('Received Graph validationToken (GET) from', req.ip || req.get('x-forwarded-for') || req.hostname);
+        res.set('Content-Type', 'text/plain');
+        return res.status(200).send(String(validationToken));
+    }
+    return res.status(200).send('OK');
 });
 
 module.exports = router;
