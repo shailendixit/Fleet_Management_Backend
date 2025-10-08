@@ -247,9 +247,9 @@ async function getOutlookGraphToken() {
 let __isProcessingUnread = false;
 const __processingMessageIds = new Set();
 
-async function processUnreadGmailMessages() {
+async function processUnreadOutlookMessages() {
     if (__isProcessingUnread) {
-        console.log('Skipping processUnreadGmailMessages: already running');
+        console.log('Skipping processUnreadOutlookMessages: already running');
         return;
     }
     __isProcessingUnread = true;
@@ -288,7 +288,7 @@ async function processUnreadGmailMessages() {
             finally { __processingMessageIds.delete(msgId); }
         }
     } catch (e) {
-        console.error('processUnreadGmailMessages error:', e);
+        console.error('processUnreadOutlookMessages error:', e);
         throw e;
     } finally {
         __isProcessingUnread = false;
@@ -301,7 +301,7 @@ async function processUnreadGmailMessages() {
  */
 /**
  * startWatch for Outlook: create a subscription for mailbox notifications if OUTLOOK_SUBSCRIPTION_URL is provided.
- * If you prefer polling instead, the server should call `processUnreadGmailMessages` (now polls Outlook) when notified.
+ * If you prefer polling instead, the server should call `processUnreadOutlookMessages` (now polls Outlook) when notified.
  */
 async function startWatch() {
     try {
@@ -351,21 +351,29 @@ async function retryAsync(fn, attempts = 3, baseDelay = 2000) {
     throw lastErr;
 }
 
+const MAX_SUBSCRIPTION_MINUTES = Number(process.env.OUTLOOK_SUBSCRIPTION_MAX_MINUTES || 4230); // 7 days by default
+
 async function createGraphSubscriptionWithRetry({ accessToken, userPath, notifyUrl }) {
     const create = async () => {
+        const expiration = new Date(Date.now() + MAX_SUBSCRIPTION_MINUTES * 60 * 1000).toISOString();
         const subReq = {
             changeType: 'created',
             notificationUrl: notifyUrl,
             resource: `${userPath}/mailFolders('Inbox')/messages`,
-            expirationDateTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            expirationDateTime: expiration,
             clientState: process.env.OUTLOOK_SUBSCRIPTION_CLIENT_STATE || 'fleet_state'
         };
         const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
-        const res = await axios.post('https://graph.microsoft.com/v1.0/subscriptions', subReq, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs });
+        const res = await axios.post(
+            'https://graph.microsoft.com/v1.0/subscriptions',
+            subReq,
+            { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs }
+        );
         const subscription = res.data;
         global.__graphSubscription = global.__graphSubscription || {};
         global.__graphSubscription.info = subscription;
         console.log('Graph subscription created:', subscription.id, subscription.expirationDateTime);
+        // scheduleSubscriptionRenewal(subscription); // immediately schedule renewal
         return subscription;
     };
     return await retryAsync(create, Number(process.env.OUTLOOK_SUBSCRIPTION_CREATE_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
@@ -375,6 +383,8 @@ function scheduleSubscriptionRenewal(subscription) {
     try {
         if (!subscription || !subscription.expirationDateTime) return;
         const exp = Date.parse(subscription.expirationDateTime);
+
+        // Renew 5 minutes before expiry, or configurable via env
         const renewBeforeMs = Number(process.env.OUTLOOK_SUBSCRIPTION_RENEW_BEFORE_MS || 5 * 60 * 1000);
         let msUntilRenew = exp - Date.now() - renewBeforeMs;
         if (msUntilRenew <= 0) msUntilRenew = 30 * 1000;
@@ -382,6 +392,7 @@ function scheduleSubscriptionRenewal(subscription) {
         if (global.__graphSubscription && global.__graphSubscription.renewTimer) {
             clearTimeout(global.__graphSubscription.renewTimer);
         }
+
         global.__graphSubscription = global.__graphSubscription || {};
         global.__graphSubscription.info = subscription;
         global.__graphSubscription.renewTimer = setTimeout(async () => {
@@ -389,11 +400,11 @@ function scheduleSubscriptionRenewal(subscription) {
                 const tokenInfo = await getOutlookGraphToken();
                 await renewGraphSubscriptionWithRetry({ accessToken: tokenInfo.accessToken, subscriptionId: subscription.id });
             } catch (e) {
-                console.error('Subscription renewal failed, will retry scheduling again:', e?.response?.data || e?.message || e);
-                // schedule a short retry
+                console.error('Subscription renewal failed, will retry in 30s:', e?.response?.data || e?.message || e);
                 setTimeout(() => scheduleSubscriptionRenewal(subscription), 30 * 1000);
             }
         }, msUntilRenew);
+
         console.log(`Scheduled subscription renewal in ${Math.round(msUntilRenew / 1000)}s for subscription ${subscription.id}`);
     } catch (e) {
         console.error('Failed to schedule subscription renewal:', e);
@@ -402,23 +413,33 @@ function scheduleSubscriptionRenewal(subscription) {
 
 async function renewGraphSubscriptionWithRetry({ accessToken, subscriptionId }) {
     const renew = async () => {
-        const newExpiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const newExpiry = new Date(Date.now() + MAX_SUBSCRIPTION_MINUTES * 60 * 1000).toISOString();
         const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
-        const res = await axios.patch(`https://graph.microsoft.com/v1.0/subscriptions/${encodeURIComponent(subscriptionId)}`, { expirationDateTime: newExpiry }, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs });
+        const res = await axios.patch(
+            `https://graph.microsoft.com/v1.0/subscriptions/${encodeURIComponent(subscriptionId)}`,
+            { expirationDateTime: newExpiry },
+            { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs }
+        );
+
         const updated = res.data || { expirationDateTime: newExpiry };
         console.log('Subscription renewed:', subscriptionId, 'new expiry:', updated.expirationDateTime || newExpiry);
+
         if (!global.__graphSubscription) global.__graphSubscription = {};
         global.__graphSubscription.info = Object.assign({}, global.__graphSubscription.info || {}, { expirationDateTime: updated.expirationDateTime || newExpiry });
+
+        // Re-schedule next renewal automatically
         scheduleSubscriptionRenewal(global.__graphSubscription.info);
+
         return updated;
     };
+
     return await retryAsync(renew, Number(process.env.OUTLOOK_SUBSCRIPTION_RENEW_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
 }
 
 
-if (require.main === module) {
-    // If run directly, start the Gmail watch (API) instead of IMAP
-    startWatch().catch(e => console.error('startWatch failed:', e));
-}
+// if (require.main === module) {
+//     // If run directly, start the Gmail watch (API) instead of IMAP
+//     startWatch().catch(e => console.error('startWatch failed:', e));
+// }
 
-module.exports = { startWatch, processUnreadGmailMessages, processRawBuffer, processParsedEmail };
+module.exports = { startWatch, processUnreadOutlookMessages, processRawBuffer, processParsedEmail };

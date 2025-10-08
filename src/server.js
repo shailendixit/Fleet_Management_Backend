@@ -7,25 +7,17 @@ const server = app.listen(PORT, () => {
 
   // Start unified email automation in-process when configured
   // Prefer Outlook (Microsoft Graph) if OUTLOOK_* env vars are present, otherwise fall back to Gmail
-  // if (process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET && (process.env.OUTLOOK_TENANT_ID || process.env.OUTLOOK_REFRESH_TOKEN)) {
-  //   try {
-  //     const { startWatch } = require('./automation/emailautomation');
-  //     startWatch();
-  //     console.log('Outlook watch started (using Microsoft Graph)');
-  //   } catch (e) {
-  //     console.error('Failed to start Outlook watch automation:', e);
-  //   }
-  // } else if (process.env.GMAIL_OAUTH_CLIENT_ID && process.env.GMAIL_OAUTH_CLIENT_SECRET && process.env.GMAIL_OAUTH_REFRESH_TOKEN) {
-  //   try {
-  //     const { startWatch } = require('./automation/emailautomation');
-  //     startWatch();
-  //     console.log('Gmail watch started (using Gmail API + Pub/Sub)');
-  //   } catch (e) {
-  //     console.error('Failed to start Gmail watch automation:', e);
-  //   }
-  // } else {
-  //   console.log('Email watch not started. Set OUTLOOK_* or GMAIL_* OAuth env vars to enable.');
-  // }
+  if (process.env.OUTLOOK_CLIENT_ID && process.env.OUTLOOK_CLIENT_SECRET && (process.env.OUTLOOK_TENANT_ID || process.env.OUTLOOK_REFRESH_TOKEN)) {
+    try {
+      const { startWatch } = require('./automation/emailautomation');
+      startWatch();
+      console.log('Outlook watch started (using Microsoft Graph)');
+    } catch (e) {
+      console.error('Failed to start Outlook watch automation:', e);
+    }
+  } else {
+    console.log('Email watch not started. Set OUTLOOK_* or GMAIL_* OAuth env vars to enable.');
+  }
 });
 
 // Graceful shutdown
