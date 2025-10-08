@@ -247,9 +247,9 @@ async function getOutlookGraphToken() {
 let __isProcessingUnread = false;
 const __processingMessageIds = new Set();
 
-async function processUnreadOutlookMessages() {
+async function processUnreadGmailMessages() {
     if (__isProcessingUnread) {
-        console.log('Skipping processUnreadOutlookMessages: already running');
+        console.log('Skipping processUnreadGmailMessages: already running');
         return;
     }
     __isProcessingUnread = true;
@@ -288,7 +288,7 @@ async function processUnreadOutlookMessages() {
             finally { __processingMessageIds.delete(msgId); }
         }
     } catch (e) {
-        console.error('processUnreadOutlookMessages error:', e);
+        console.error('processUnreadGmailMessages error:', e);
         throw e;
     } finally {
         __isProcessingUnread = false;
@@ -301,7 +301,7 @@ async function processUnreadOutlookMessages() {
  */
 /**
  * startWatch for Outlook: create a subscription for mailbox notifications if OUTLOOK_SUBSCRIPTION_URL is provided.
- * If you prefer polling instead, the server should call `processUnreadOutlookMessages` (now polls Outlook) when notified.
+ * If you prefer polling instead, the server should call `processUnreadGmailMessages` (now polls Outlook) when notified.
  */
 async function startWatch() {
     try {
@@ -442,4 +442,4 @@ async function renewGraphSubscriptionWithRetry({ accessToken, subscriptionId }) 
 //     startWatch().catch(e => console.error('startWatch failed:', e));
 // }
 
-module.exports = { startWatch, processUnreadOutlookMessages, processRawBuffer, processParsedEmail };
+module.exports = { startWatch, processUnreadGmailMessages, processRawBuffer, processParsedEmail };
