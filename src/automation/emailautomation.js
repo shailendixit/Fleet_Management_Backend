@@ -246,6 +246,18 @@ async function getOutlookGraphToken() {
  */
 let __isProcessingUnread = false;
 const __processingMessageIds = new Set();
+// Short-lived processed message map to avoid re-processing the same message id
+// even if it appears again due to duplicate notifications or temporary failures.
+global.__processedMessageIds = global.__processedMessageIds || new Map();
+// cleanup processed ids periodically
+if (!global.__processedMessageIdsCleanup) {
+    global.__processedMessageIdsCleanup = setInterval(() => {
+        const now = Date.now();
+        for (const [k, exp] of global.__processedMessageIds.entries()) {
+            if (exp <= now) global.__processedMessageIds.delete(k);
+        }
+    }, 60 * 1000); // every minute
+}
 
 async function processUnreadGmailMessages() {
     if (__isProcessingUnread) {
@@ -271,19 +283,36 @@ async function processUnreadGmailMessages() {
 
         for (const m of messages) {
             const msgId = m.id;
+            // If we've processed this message recently, skip it
+            if (global.__processedMessageIds.has(msgId)) {
+                console.log('Skipping message already processed recently', msgId);
+                continue;
+            }
+
             if (__processingMessageIds.has(msgId)) { console.log('Skipping already-processing message', msgId); continue; }
             __processingMessageIds.add(msgId);
             try {
                 // Get MIME content (raw) — requires the $value endpoint
                 // endpoint: /users/{id}/messages/{id}/$value
                 const getUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(msgId)}/$value`;
-                const msgRes = await axios.get(getUrl, { headers: { Authorization: `Bearer ${accessToken}` }, responseType: 'arraybuffer', timeout: 20000 });
+                console.log('Fetching message raw for', msgId);
+                const msgRes = await axios.get(getUrl, { headers: { Authorization: `Bearer ${accessToken}` }, responseType: 'arraybuffer', timeout: 30000 });
                 const buffer = Buffer.from(msgRes.data);
+
+                // Process the email buffer
                 await processRawBuffer(buffer);
 
-                // Mark message as read
-                const patchUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(msgId)}`;
-                await axios.patch(patchUrl, { isRead: true }, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: 10000 });
+                // After successful processing, mark read with retries and add to processed map
+                try {
+                    await markMessageReadWithRetry({ accessToken, userPath, subscriptionMessageId: msgId });
+                } catch (markErr) {
+                    console.error('Failed to mark message as read after processing', msgId, markErr?.response?.data || markErr?.message || markErr);
+                }
+
+                // Store processed id for TTL to avoid re-processing if Graph re-notifies
+                const ttlMs = Number(process.env.OUTLOOK_PROCESSED_MSG_TTL_MS || 24 * 60 * 60 * 1000); // default 24 hours
+                global.__processedMessageIds.set(msgId, Date.now() + ttlMs);
+
             } catch (e) { console.error('Error processing message', msgId, e?.response?.data || e.message || e); }
             finally { __processingMessageIds.delete(msgId); }
         }
@@ -434,6 +463,16 @@ async function renewGraphSubscriptionWithRetry({ accessToken, subscriptionId }) 
     };
 
     return await retryAsync(renew, Number(process.env.OUTLOOK_SUBSCRIPTION_RENEW_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
+}
+
+// Mark message read with retries
+async function markMessageReadWithRetry({ accessToken, userPath, subscriptionMessageId }) {
+    const doMark = async () => {
+        const patchUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(subscriptionMessageId)}`;
+        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
+        await axios.patch(patchUrl, { isRead: true }, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs });
+    };
+    return await retryAsync(doMark, Number(process.env.OUTLOOK_MARK_READ_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
 }
 
 
