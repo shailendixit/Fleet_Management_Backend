@@ -296,7 +296,7 @@ async function processUnreadGmailMessages() {
                 // endpoint: /users/{id}/messages/{id}/$value
                 const getUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(msgId)}/$value`;
                 console.log('Fetching message raw for', msgId);
-                const msgRes = await axios.get(getUrl, { headers: { Authorization: `Bearer ${accessToken}` }, responseType: 'arraybuffer', timeout: 30000 });
+                const msgRes = await axios.get(getUrl, { headers: { Authorization: `Bearer ${accessToken}` }, responseType: 'arraybuffer', timeout: 40000 });
                 const buffer = Buffer.from(msgRes.data);
 
                 // Process the email buffer
@@ -348,6 +348,13 @@ async function startWatch() {
         const userPath = tokenInfo.delegated ? 'me' : (userId ? `users/${userId}` : null);
         if (!userPath) throw new Error('OUTLOOK_USER_ID or ONEDRIVE_USER_ID must be set for creating Graph subscriptions');
 
+        // Before creating a new subscription, list and delete existing matching subscriptions
+        try {
+            await deleteMatchingGraphSubscriptions({ accessToken, userPath, notifyUrl });
+        } catch (e) {
+            console.warn('Failed to delete existing subscriptions (continuing to create new one):', e?.response?.data || e.message || e);
+        }
+
         // Create subscription with retries and start renewal loop
         try {
             const subscription = await createGraphSubscriptionWithRetry({ accessToken, userPath, notifyUrl });
@@ -362,6 +369,45 @@ async function startWatch() {
         // don't throw so startup can continue
         return null;
     }
+}
+
+// List subscriptions and delete those that match our resource / notificationUrl / clientState
+async function deleteMatchingGraphSubscriptions({ accessToken, userPath, notifyUrl }) {
+    const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 40000);
+    // Fetch subscriptions (may be paged; but usually small)
+    const res = await axios.get('https://graph.microsoft.com/v1.0/subscriptions', { headers: { Authorization: `Bearer ${accessToken}` }, timeout: timeoutMs });
+    const subs = (res.data && res.data.value) || [];
+    if (!subs.length) return;
+
+    const ourResource = `${userPath}/mailFolders('Inbox')/messages`;
+    const clientState = process.env.OUTLOOK_SUBSCRIPTION_CLIENT_STATE || 'fleet_state';
+
+    const toDelete = subs.filter(s => {
+        if (!s) return false;
+        try {
+            if (s.resource === ourResource) return true;
+            if (s.notificationUrl === notifyUrl) return true;
+            if (s.clientState === clientState) return true;
+        } catch (e) { return false; }
+        return false;
+    });
+
+    for (const s of toDelete) {
+        try {
+            await deleteGraphSubscriptionWithRetry({ accessToken, subscriptionId: s.id });
+            console.log('Deleted existing subscription:', s.id, s.resource, s.notificationUrl);
+        } catch (e) {
+            console.warn('Failed to delete subscription', s.id, e?.response?.data || e.message || e);
+        }
+    }
+}
+
+async function deleteGraphSubscriptionWithRetry({ accessToken, subscriptionId }) {
+    const doDelete = async () => {
+        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 40000);
+        await axios.delete(`https://graph.microsoft.com/v1.0/subscriptions/${encodeURIComponent(subscriptionId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: timeoutMs });
+    };
+    return await retryAsync(doDelete, Number(process.env.OUTLOOK_SUBSCRIPTION_DELETE_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
 }
 
 // --- subscription helpers ---
@@ -392,7 +438,7 @@ async function createGraphSubscriptionWithRetry({ accessToken, userPath, notifyU
             expirationDateTime: expiration,
             clientState: process.env.OUTLOOK_SUBSCRIPTION_CLIENT_STATE || 'fleet_state'
         };
-        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
+        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 40000);
         const res = await axios.post(
             'https://graph.microsoft.com/v1.0/subscriptions',
             subReq,
@@ -443,7 +489,7 @@ function scheduleSubscriptionRenewal(subscription) {
 async function renewGraphSubscriptionWithRetry({ accessToken, subscriptionId }) {
     const renew = async () => {
         const newExpiry = new Date(Date.now() + MAX_SUBSCRIPTION_MINUTES * 60 * 1000).toISOString();
-        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
+        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 40000);
         const res = await axios.patch(
             `https://graph.microsoft.com/v1.0/subscriptions/${encodeURIComponent(subscriptionId)}`,
             { expirationDateTime: newExpiry },
@@ -469,7 +515,7 @@ async function renewGraphSubscriptionWithRetry({ accessToken, subscriptionId }) 
 async function markMessageReadWithRetry({ accessToken, userPath, subscriptionMessageId }) {
     const doMark = async () => {
         const patchUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(subscriptionMessageId)}`;
-        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 30000);
+        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 40000);
         await axios.patch(patchUrl, { isRead: true }, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs });
     };
     return await retryAsync(doMark, Number(process.env.OUTLOOK_MARK_READ_RETRIES || 3), Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000));
