@@ -220,18 +220,47 @@ async function processParsedEmail(parsed) {
         for (const attachment of parsed.attachments) {
             if (!attachment.filename) continue;
             const lower = attachment.filename.toLowerCase();
-            if (!(lower.endsWith('.xlsx') || lower.endsWith('.xls'))) continue;
+                // Accept xlsx/xls and csv attachments. For csv we'll try to convert to xlsx in-memory
+                if (!(lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv'))) continue;
 
-            if (subject.toLowerCase().includes('tasksheet')) {
+                // Normalize buffer and filename for handlers: if CSV, try to convert to XLSX
+                let processedAttachment = attachment;
+                if (lower.endsWith('.csv')) {
+                    try {
+                        // optional dependency - convert CSV to XLSX if exceljs is available
+                        const ExcelJS = require('exceljs');
+                        const workbook = new ExcelJS.Workbook();
+                        const sheet = workbook.addWorksheet('Sheet1');
+
+                        // parse CSV rows (simple split - robust enough for common cases). If exceljs has csv parsing we can use it.
+                        const csvText = attachment.content.toString('utf8');
+                        const rows = csvText.split(/\r?\n/).filter(r => r.length);
+                        for (const r of rows) {
+                            // naive CSV split on commas — handles simple CSVs without embedded commas/quotes
+                            // If you expect quoted fields with commas, consider using a CSV parser (csv-parse)
+                            const cols = r.split(',').map(c => c.replace(/^\uFEFF/, ''));
+                            sheet.addRow(cols);
+                        }
+                        const xlsxBuffer = await workbook.xlsx.writeBuffer();
+                        processedAttachment = { filename: attachment.filename.replace(/\.csv$/i, '.xlsx'), content: xlsxBuffer };
+                        console.log('Converted CSV attachment to XLSX for', attachment.filename);
+                    } catch (e) {
+                        // exceljs not present or conversion failed; keep CSV buffer and let upload handlers decide
+                        console.warn('Failed to convert CSV to XLSX (exceljs unavailable or error). Passing raw CSV to handlers:', e?.message || e);
+                        processedAttachment = attachment; // keep original
+                    }
+                }
+
+                if (subject.toLowerCase().includes('tasksheet')) {
                 console.log('Detected TaskSheet -> calling uploadExcel in-process');
-                const fakeReq = { file: { buffer: attachment.content } };
+                    const fakeReq = { file: { buffer: processedAttachment.content } };
                 const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadExcel result', c, b) }) };
                 try { await taskController.uploadExcel(fakeReq, fakeRes); }
                 catch (e) { console.error('uploadExcel failed:', e); }
 
-            } else if (subject.toLowerCase().includes('invoicesheet')) {
+            } else if (subject.toLowerCase().includes('invoicesheet') || subject.toLowerCase().includes('slik')) {
                 console.log('Detected InvoiceSheet -> calling uploadInvoiceExcel in-process');
-                const fakeReq = { file: { buffer: attachment.content } };
+                const fakeReq = { file: { buffer: processedAttachment.content } };
                 const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadInvoiceExcel result', c, b) }) };
                 try {
                     await taskController.uploadInvoiceExcel(fakeReq, fakeRes);
