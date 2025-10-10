@@ -135,74 +135,71 @@ async function sendMissingInvoiceAlert() {
 }
 
 // Fallback: build a raw MIME message and send via Gmail API (useful when SMTP is blocked)
-async function sendMissingInvoiceAlertViaGmailAPI({ from, to, subject, html, attachments }) {
-    try {
-        const auth = await getOAuth2Client();
-        const gmail = google.gmail({ version: 'v1', auth });
-        const MailComposer = require('nodemailer/lib/mail-composer');
-        const mail = new MailComposer({ from, to, subject, html, attachments });
-        const messageBuffer = await new Promise((resolve, reject) => mail.compile().build((err, msg) => err ? reject(err) : resolve(msg)));
-        const raw = messageBuffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-        const res = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
-        console.log('Missing invoice alert sent via Gmail API:', res && res.data && res.data.id);
-        return res.data;
-    } catch (e) {
-        console.error('Gmail API fallback failed:', e);
-        throw e;
-    }
-}
-
-// Send email using Microsoft Graph with app-only client credentials
 async function sendMissingInvoiceAlertViaGraph({ from, to, subject, html, attachments }) {
-    // Build MIME message using nodemailer's MailComposer
-    try {
-        const MailComposer = require('nodemailer/lib/mail-composer');
-        const mail = new MailComposer({ from, to, subject, html, attachments });
-        const messageBuffer = await new Promise((resolve, reject) => mail.compile().build((err, msg) => err ? reject(err) : resolve(msg)));
+  try {
+    const axios = require('axios');
 
-        // acquire app-only token
-        const clientId = process.env.OUTLOOK_CLIENT_ID;
-        const clientSecret = process.env.OUTLOOK_CLIENT_SECRET;
-        const tenant = process.env.OUTLOOK_TENANT_ID;
-        if (!clientId || !clientSecret || !tenant) throw new Error('OUTLOOK_CLIENT_ID/OUTLOOK_CLIENT_SECRET/OUTLOOK_TENANT_ID required for Graph send');
+    // Acquire app-only token
+    const clientId = process.env.OUTLOOK_CLIENT_ID;
+    const clientSecret = process.env.OUTLOOK_CLIENT_SECRET;
+    const tenant = process.env.OUTLOOK_TENANT_ID;
+    if (!clientId || !clientSecret || !tenant)
+      throw new Error('OUTLOOK_CLIENT_ID/OUTLOOK_CLIENT_SECRET/OUTLOOK_TENANT_ID required for Graph send');
 
-        const params = new URLSearchParams();
-        params.append('client_id', clientId);
-        params.append('client_secret', clientSecret);
-        params.append('scope', 'https://graph.microsoft.com/.default');
-        params.append('grant_type', 'client_credentials');
+    const params = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: 'https://graph.microsoft.com/.default',
+      grant_type: 'client_credentials',
+    });
 
-        const tokenRes = await axios.post(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, params.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 });
-        const accessToken = tokenRes.data && tokenRes.data.access_token;
-        if (!accessToken) throw new Error('Failed to obtain Graph access token');
+    const tokenRes = await axios.post(
+      `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
+      params.toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
+    );
 
-        // Use the MIME send endpoint: /users/{id}/sendMail with raw MIME is not supported in v1 for app-only; instead use /users/{id}/messages and create/send
-        // We'll try creating a message with MIME content via the $value upload for createUploadSession -> but Graph doesn't support raw MIME create in app-only reliably.
-        // Fallback approach: send via the /users/{id}/sendMail using the MIME content encoded as base64 in the message object (supported for delegated flows).
-        // For app-only, Azure allows sending with the 'sendMail' action on users if the app has Mail.Send application permission. We'll create a message with MIME using MIMEContent.
+    const accessToken = tokenRes.data?.access_token;
+    if (!accessToken) throw new Error('Failed to obtain Graph access token');
 
-        // Determine target user: prefer OUTLOOK_USER_ID env
-        const userId = process.env.OUTLOOK_USER_ID || process.env.ONEDRIVE_USER_ID;
-        if (!userId) throw new Error('OUTLOOK_USER_ID required to send mail as app-only');
+    const userId = process.env.OUTLOOK_USER_ID;
+    if (!userId) throw new Error('OUTLOOK_USER_ID required to send mail as app-only');
 
-        // Graph supports creating a message with raw MIME using the 'mimeContent' property base64-encoded
-        const rawBase64 = messageBuffer.toString('base64');
-        const createMsgUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/messages`;
-        const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 40000);
+    // Prepare attachments in Graph format
+    const graphAttachments = attachments.map(a => ({
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name: a.filename,
+      contentType: a.contentType,
+      contentBytes: a.content.toString('base64'),
+    }));
 
-        // Create the message
-        const createRes = await axios.post(createMsgUrl, { message: { subject, mimeContent: { '@odata.type': 'Edm.String', contentType: 'text/plain', content: rawBase64 } } }, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, timeout: timeoutMs });
-        const message = createRes.data;
+    const email = {
+      message: {
+        subject,
+        body: {
+          contentType: 'HTML',
+          content: html,
+        },
+        toRecipients: [{ emailAddress: { address: to } }],
+        attachments: graphAttachments,
+      },
+      saveToSentItems: false,
+    };
 
-        // Send the created message
-        const sendUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/messages/${encodeURIComponent(message.id)}/send`;
-        await axios.post(sendUrl, {}, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: timeoutMs });
-        return { id: message.id };
-    } catch (e) {
-        console.error('sendMissingInvoiceAlertViaGraph failed:', e?.response?.data || e?.message || e);
-        throw e;
-    }
+    const res = await axios.post(
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/sendMail`,
+      email,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    console.log('✅ Missing invoice alert sent via Microsoft Graph:', res.status);
+    return res.data;
+  } catch (e) {
+    console.error('sendMissingInvoiceAlertViaGraph failed:', e?.response?.data || e?.message || e);
+    throw e;
+  }
 }
+
 
 // --- New helpers to support Gmail API driven processing (Pub/Sub push) ---
 const { google } = require('googleapis');
@@ -594,4 +591,4 @@ async function markMessageReadWithRetry({ accessToken, userPath, subscriptionMes
 //     startWatch().catch(e => console.error('startWatch failed:', e));
 // }
 
-module.exports = { startWatch, processUnreadGmailMessages, processRawBuffer, processParsedEmail };
+module.exports = { startWatch, processUnreadGmailMessages, sendMissingInvoiceAlertViaGraph, processRawBuffer, processParsedEmail };
