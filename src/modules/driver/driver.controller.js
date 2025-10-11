@@ -328,14 +328,28 @@ async function completeAssignment(req, res) {
   // build PDF buffer (await PDF generation)
   const pdfBuffer = await buildPdfBuffer({ podImageBuffer, invoiceImageBuffer, checklist });
 
-    // prepare filename
+// Prepare filename using Australian (Sydney) time
 const now = new Date();
-const hours = String(now.getHours()).padStart(2, '0');
-const minutes = String(now.getMinutes()).padStart(2, '0');
-const seconds = String(now.getSeconds()).padStart(2, '0');
+const options = { timeZone: "Australia/Sydney", hour12: false };
+
+// Format to Australian time components
+const formatter = new Intl.DateTimeFormat("en-AU", {
+  timeZone: "Australia/Sydney",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit"
+});
+
+const parts = formatter.formatToParts(now);
+const hours = parts.find(p => p.type === "hour").value;
+const minutes = parts.find(p => p.type === "minute").value;
+const seconds = parts.find(p => p.type === "second").value;
 
 const timeStr = `${hours}-${minutes}-${seconds}`;
 const filename = `POD_${invoiceId}_${timeStr}.pdf`;
+
+// upload to OneDrive
+
 
     // upload to OneDrive
     let uploadResult;
