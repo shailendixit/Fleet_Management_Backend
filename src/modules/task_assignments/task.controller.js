@@ -1,7 +1,7 @@
 const xlsx = require('xlsx');
 const fs = require('fs');
 const prisma = require('../../lib/prisma');
-
+const ExcelJS = require("exceljs");
  // Helpers
 function safeNumber(val) {
   if (val === null || val === undefined || val === "") return null;
@@ -227,6 +227,45 @@ exports.getTasksInProgress = async (req, res) => {
   }
 };
 
+// fetch assigned task without invoice id.
+exports.getTasksWithoutInvoiceExcel = async (req, res) => {
+  try {
+    const tasks = await prisma.assignedTask_DB.findMany({
+      where: {
+        OR: [
+          { invoiceId: null },
+          { invoiceId: "" }
+        ]
+      }
+    });
+
+    if (!tasks || tasks.length === 0) {
+      return res.status(404).json({ message: "No tasks found without invoiceId." });
+    }
+
+    // Create a new workbook and worksheet
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Tasks Without Invoice");
+
+    // Add headers
+    const headers = Object.keys(tasks[0]);
+    worksheet.columns = headers.map((key) => ({ header: key, key }));
+
+    // Add rows
+    tasks.forEach((task) => worksheet.addRow(task));
+
+    // Prepare Excel file for download
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", "attachment; filename=tasks_without_invoice.xlsx");
+
+    await workbook.xlsx.write(res);
+    res.end();
+
+  } catch (err) {
+    console.error("Excel Export Error:", err);
+    res.status(500).json({ error: "Failed to export Excel" });
+  }
+};
 // ----------------- FETCH Completed DATA -----------------
 exports.getCompletedTasks = async (req, res) => {
   try {

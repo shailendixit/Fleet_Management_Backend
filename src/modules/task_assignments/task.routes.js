@@ -20,6 +20,8 @@ router.get("/getAvailableDrivers", taskController.getAvailableDrivers);
 // Get tasks in progress (not completed)
 router.get("/getTasksInProgress", authenticateToken, taskController.getTasksInProgress);
 
+router.get("/getTaskWithoutInvoice",taskController.getTasksWithoutInvoiceExcel);
+
 // Get assigned tasks (optionally filter by truckId or truckNo)
 router.get('/assigned', taskController.getAssignedTasks);
 
