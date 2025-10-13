@@ -229,18 +229,24 @@ async function processParsedEmail(parsed) {
                     try {
                         // optional dependency - convert CSV to XLSX if exceljs is available
                         const ExcelJS = require('exceljs');
+                        const { parse } = require('csv-parse/sync'); // CSV parser for robust handling
                         const workbook = new ExcelJS.Workbook();
                         const sheet = workbook.addWorksheet('Sheet1');
 
-                        // parse CSV rows (simple split - robust enough for common cases). If exceljs has csv parsing we can use it.
+                          // parse CSV content safely
                         const csvText = attachment.content.toString('utf8');
-                        const rows = csvText.split(/\r?\n/).filter(r => r.length);
-                        for (const r of rows) {
-                            // naive CSV split on commas — handles simple CSVs without embedded commas/quotes
-                            // If you expect quoted fields with commas, consider using a CSV parser (csv-parse)
-                            const cols = r.split(',').map(c => c.replace(/^\uFEFF/, ''));
-                            sheet.addRow(cols);
-                        }
+                        // parse CSV rows (simple split - robust enough for common cases). If exceljs has csv parsing we can use it.
+                         const records = parse(csvText, {
+                                skip_empty_lines: true,
+                                relax_quotes: true,
+                                relax_column_count: true,
+                                trim: true
+                            });
+                             // add rows to Excel sheet
+                                for (const row of records) {
+                                    sheet.addRow(row);
+                                }
+
                         const xlsxBuffer = await workbook.xlsx.writeBuffer();
                         processedAttachment = { filename: attachment.filename.replace(/\.csv$/i, '.xlsx'), content: xlsxBuffer };
                         console.log('Converted CSV attachment to XLSX for', attachment.filename);
