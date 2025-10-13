@@ -201,9 +201,10 @@ exports.assignTasks = async (req, res) => {
       if (assignedRecords.length > 0) {
         await tx.assignedTask_DB.createMany({ data: assignedRecords });
 
-        await tx.task_DB.updateMany({
-          where: { taskId: { in: assignedRecords.map(r => r.taskId) } },
-          data: { isassigned: true },
+        await tx.task_DB.deleteMany({
+          where: {
+            taskId: { in: assignedRecords.map(r => r.taskId) },
+          },
         });
       }
     });
