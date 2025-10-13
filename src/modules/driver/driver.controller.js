@@ -9,11 +9,19 @@ function bufferToStream(buffer) {
   stream.push(null);
   return stream;
 }
+let cachedToken = null;
+let cachedExpiry = 0;
 
 async function getGraphToken() {
   const clientId = process.env.ONEDRIVE_CLIENT_ID;
   const clientSecret = process.env.ONEDRIVE_CLIENT_SECRET;
   const tenant = process.env.ONEDRIVE_TENANT_ID;
+  const now = Date.now();
+
+  // 1️⃣ Return cached token if still valid
+  if (cachedToken && now < cachedExpiry) {
+    return cachedToken;
+  }
 
   // If we have a refresh token configured, use delegated flow (suitable for personal accounts)
   const refreshToken = process.env.ONEDRIVE_REFRESH_TOKEN;
@@ -51,8 +59,10 @@ async function getGraphToken() {
 
   const tokenRes = await axios.post(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, params.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    timeout: 10000
+    timeout: 20000
   });
+    cachedToken = tokenRes.data.access_token;
+  cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000; 
   return tokenRes.data.access_token;
 }
 

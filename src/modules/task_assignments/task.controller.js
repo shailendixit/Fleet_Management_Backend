@@ -78,7 +78,11 @@ exports.uploadExcel = async (req, res) => {
       skipDuplicates: true, // prevents error if same row already exists
     });
 
-  try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch (e) { /* ignore cleanup errors */ }
+    try {
+      if (req.file && req.file.path) fs.unlink(req.file.path, err => {
+        if (err) console.error("Cleanup failed:", err);
+      });
+    } catch (e) { /* ignore cleanup errors */ }
   res.status(200).json({ message: "Tasks inserted into DB." });
   } catch (err) {
     console.error("Upload Error:", err);
@@ -111,7 +115,11 @@ exports.populateDriverDB = async (req, res) => {
       skipDuplicates: true, // avoids duplicate insertions
     });
 
-  try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch (e) { /* ignore cleanup errors */ }
+    try {
+      if (req.file && req.file.path) fs.unlink(req.file.path, err => {
+        if (err) console.error("Cleanup failed:", err);
+      });
+    } catch (e) { /* ignore cleanup errors */ }
   res.status(200).json({ message: "Drivers inserted into DB." });
   } catch (err) {
     console.error("Driver Upload Error:", err);
@@ -436,7 +444,9 @@ exports.uploadInvoiceExcel = async (req, res) => {
 
     // cleanup file if path used
     try {
-      if (req.file && req.file.path) fs.unlinkSync(req.file.path);
+      if (req.file && req.file.path) fs.unlink(req.file.path, err => {
+            if (err) console.error("Cleanup failed:", err);
+          });
     } catch (e) {
       console.warn("File cleanup failed:", e);
     }
