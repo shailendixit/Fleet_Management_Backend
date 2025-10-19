@@ -432,6 +432,18 @@ const filename = `POD_${invoiceId}_${timeStr}.pdf`;
     return res.status(200).json({ message: 'Assignment completed', podUrl, uploadResult });
   } catch (err) {
     console.error('completeAssignment error', err);
+
+    // Try to mark task as attempted even if main transaction failed
+    try {
+      await prisma.assignedTask_DB.update({
+        where: { assignedTaskId: atId },
+        data: { isAttemptedToComplete: true },
+      });
+      console.log(`Marked assignedTaskId ${atId} as attempted to complete`);
+    } catch (updateErr) {
+      console.error('Failed to update isAttemptedToComplete flag:', updateErr);
+    }
+
     return res.status(500).json({ error: 'Internal server error', details: err.message || err });
   }
 }

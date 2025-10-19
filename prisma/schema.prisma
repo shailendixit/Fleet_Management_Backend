@@ -126,13 +126,14 @@ model AssignedTask_DB {
   invoiceId          String? 
   manifestNo         String? 
   isCompleted       Boolean  @default(false)
+  isAttemptedToComplete       Boolean  @default(false)
     @@index([orderNumber])
     @@index([truckNo])
 }
 
 model CompletedTask_DB {
   completedTaskId    Int      @id @default(autoincrement())
-    taskId             Int      @unique
+  taskId             Int      @unique
   orderCo              Float?
   orTy                 String?
   orderNumber          Float?
@@ -170,7 +171,7 @@ model CompletedTask_DB {
   truckNo             Int?
   driverName          String?  @map("Drivers Name")
   assignedAt         DateTime @default(now())
-  invoiceId          String? @unique
+  invoiceId          String? 
   manifestNo         String? 
   POD               String?
   InvoiceImage     String?
