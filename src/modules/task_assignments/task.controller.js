@@ -239,14 +239,8 @@ exports.getTasksInProgress = async (req, res) => {
 // fetch assigned task without invoice id.
 exports.getTasksWithoutInvoiceExcel = async (req, res) => {
   try {
-    const tasks = await prisma.assignedTask_DB.findMany({
-      where: {
-        OR: [
-          { invoiceId: null },
-          { invoiceId: "" }
-        ]
-      }
-    });
+    const tasks = await prisma.assignedTask_DB.findMany();
+
 
     if (!tasks || tasks.length === 0) {
       return res.status(404).json({ message: "No tasks found without invoiceId." });
