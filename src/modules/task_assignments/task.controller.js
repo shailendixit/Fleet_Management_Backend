@@ -2,6 +2,7 @@ const xlsx = require('xlsx');
 const fs = require('fs');
 const prisma = require('../../lib/prisma');
 const ExcelJS = require("exceljs");
+const axios = require('axios');
  // Helpers
 function safeNumber(val) {
   if (val === null || val === undefined || val === "") return null;
@@ -202,6 +203,7 @@ exports.assignTasks = async (req, res) => {
           truckType: t.truckType || null,
           invoiceId: t.invoiceId || null,
           manifestNo: t.manifestNo || null,
+          TrackerID: t.TrackerID || null,
           status: 'Not Started',
         });
       }
@@ -233,6 +235,24 @@ exports.getTasksInProgress = async (req, res) => {
   } catch (err) {
     console.error("Fetch Tasks Error:", err);
     res.status(500).json({ error: "Failed to fetch tasks" });
+  }
+};
+exports.getLocation = async (req, res) => {
+ try {
+    const { NETSTAR_BASE_URL, NETSTAR_USERNAME, NETSTAR_PASSWORD } = process.env;
+
+    const response = await axios.get(NETSTAR_BASE_URL, {
+      auth: {
+        username: NETSTAR_USERNAME,
+        password: NETSTAR_PASSWORD
+      }
+    });
+
+    res.status(200).json(response.data);
+
+  } catch (error) {
+    console.error('Netstar API Error:', error.message);
+    res.status(500).json({ message: 'Failed to fetch Netstar data', error: error.message });
   }
 };
 

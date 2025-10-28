@@ -70,6 +70,7 @@ model Driver_Db {
   status      Status   @default(available)
   username    String?  @unique
   password    String?
+  TrackerID     Int?     @unique
 }
 model User_Db {
   id          Int      @id @default(autoincrement())
@@ -98,6 +99,7 @@ model AssignedTask_DB {
   revisionReason       String?
   routeCode            String?
   schedPick            DateTime?
+  TrackerID             Int?
   truckId              String?
   location             String?
   scheduledPickTime    Float?

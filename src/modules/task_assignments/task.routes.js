@@ -37,4 +37,6 @@ router.post('/assignTasks', authenticateToken,  taskController.assignTasks);
 // Update manifestNo and/or invoiceId for assigned tasks (can update multiple by orderNumber or assignedTaskId)
 router.post('/assignedTasks/updateInvoiceManifest', authenticateToken, taskController.updateInvoiceManifest);
 
+router.get('/getLocation',taskController.getLocation);
+
 module.exports = router;
