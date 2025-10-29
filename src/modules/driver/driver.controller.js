@@ -73,14 +73,14 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
   // Delegated token flow (/me/drive)
   if (process.env.ONEDRIVE_REFRESH_TOKEN) {
     // Build date-based folder name
-    const today = new Date();
-    const dd = String(today.getDate()).padStart(2, "0");
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const yyyy = today.getFullYear();
-    const dateFolder = `${dd}-${mm}-${yyyy}`;
+    // const today = new Date();
+    // const dd = String(today.getDate()).padStart(2, "0");
+    // const mm = String(today.getMonth() + 1).padStart(2, "0");
+    // const yyyy = today.getFullYear();
+    // const dateFolder = `${dd}-${mm}-${yyyy}`;
 
     // Final path → FleetPODs/dateFolder/filename.pdf
-    const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
+    // const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
     const uploadUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodedPath}:/content`;
 
     // Step 1: Upload the PDF
@@ -127,8 +127,14 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
   // App-only flow requires ONEDRIVE_USER_ID
   const userId = process.env.ONEDRIVE_USER_ID;
   if (!userId) throw new Error("ONEDRIVE_USER_ID env var is required for app-only flow");
+const today = new Date();
+    const dd = String(today.getDate()).padStart(2, "0");
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const yyyy = today.getFullYear();
+    const dateFolder = `${dd}-${mm}-${yyyy}`;
 
-  const encodedPath = encodeURIComponent(`${folder}/${filename}`);
+ 
+  const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
   const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/${encodedPath}:/content`;
 
   const res = await axios.put(uploadUrl, pdfBuffer, {
@@ -366,6 +372,12 @@ async function completeAssignment(req, res) {
   // build PDF buffer (await PDF generation)
   const pdfBuffer = await buildPdfBuffer({ podImageBuffer, invoiceImageBuffer, checklist });
 
+
+  // move the assigned task to completed task in DB (transaction) -- this line will be used after upload
+    const atId = Number(assignedTaskId);
+    const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
+    if (!assigned) return res.status(404).json({ error: 'Assigned task not found' });
+    const description = assigned.description || 'NoDescription';
 // Prepare filename using Australian (Sydney) time
 const now = new Date();
 const options = { timeZone: "Australia/Sydney", hour12: false };
@@ -384,10 +396,11 @@ const minutes = parts.find(p => p.type === "minute").value;
 const seconds = parts.find(p => p.type === "second").value;
 
 const timeStr = `${hours}-${minutes}-${seconds}`;
-const filename = `POD_${invoiceId}_${timeStr}.pdf`;
+const filename = `POD_${invoiceId}_${description}_${timeStr}.pdf`;
 
 // upload to OneDrive
 
+  
 
     // upload to OneDrive
     let uploadResult;
@@ -400,10 +413,7 @@ const filename = `POD_${invoiceId}_${timeStr}.pdf`;
 
     const podUrl = uploadResult.publicUrl || uploadResult.webUrl || uploadResult.id || null;
 
-    // move the assigned task to completed task in DB (transaction)
-    const atId = Number(assignedTaskId);
-    const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
-    if (!assigned) return res.status(404).json({ error: 'Assigned task not found' });
+  
 
     // Build object for CompletedTask_DB - copy relevant fields
     const completedData = {
