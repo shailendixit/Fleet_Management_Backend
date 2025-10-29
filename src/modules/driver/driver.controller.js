@@ -94,28 +94,28 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
       timeout: 300000 // allow large/slow uploads (5 min)
     });
 
-    const fileId = res.data.id;
-
-    // Step 2: Try to create public link
-    let publicUrl = res.data.webUrl; // fallback to normal URL
-    try {
-      const linkRes = await retry(
-        () =>
-          axios.post(
-            `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/createLink`,
-            { type: "view", scope: "anonymous" },
-            {
-              headers: { Authorization: `Bearer ${accessToken}` },
-              timeout: 15000 // short timeout (link creation is fast)
-            }
-          ),
-        3, // retries
-        2000 // delay between retries
-      );
-      publicUrl = linkRes.data.link.webUrl;
-    } catch (err) {
-      console.warn("createLink failed after retries:", err.message);
-    }
+    // const fileId = res.data.id;
+    // console.log(res);
+    // // Step 2: Try to create public link
+    // let publicUrl = res.data.webUrl; // fallback to normal URL
+    // try {
+    //   const linkRes = await retry(
+    //     () =>
+    //       axios.post(
+    //         `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/createLink`,
+    //         { type: "view", scope: "anonymous" },
+    //         {
+    //           headers: { Authorization: `Bearer ${accessToken}` },
+    //           timeout: 15000 // short timeout (link creation is fast)
+    //         }
+    //       ),
+    //     3, // retries
+    //     2000 // delay between retries
+    //   );
+    //   publicUrl = linkRes.data.link.webUrl;
+    // } catch (err) {
+    //   console.warn("createLink failed after retries:", err.message);
+    // }
 
     // Always return file metadata + a usable URL
     return {
@@ -141,7 +141,35 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
     timeout: 300000
   });
 
-  return res.data;
+  const fileId = res.data.id;
+let publicUrl = res.data.webUrl;
+
+try {
+  const linkRes = await retry(
+    () =>
+      axios.post(
+        `https://graph.microsoft.com/v1.0/users/${userId}/drive/items/${fileId}/createLink`,
+        { type: "view", scope: "anonymous" },
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: 15000
+        }
+      ),
+    3,
+    2000
+  );
+  publicUrl = linkRes.data.link.webUrl;
+  console.log("Public link created:", publicUrl);
+} catch (err) {
+  console.warn("createLink failed after retries:", err.response?.data || err.message);
+}
+
+
+  
+  return {
+      ...res.data,
+      publicUrl
+    };
 }
 
 // Simple retry helper
