@@ -346,80 +346,105 @@ async function testOneDriveUpload(req, res) {
   }
 }
 
+async function retryUpload(fn, filename, maxRetries = 3, delayMs = 1000) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      const res = await fn();
+      if (res) return res;
+      throw new Error("Empty upload response");
+    } catch (err) {
+      attempt++;
+      const wait = delayMs * Math.pow(2, attempt - 1); // exponential backoff
+      console.error(
+        `[Upload Retry] ${filename} attempt ${attempt}/${maxRetries} failed: ${err.message}`
+      );
+      if (attempt >= maxRetries) {
+        console.error(`[Upload Retry] ${filename} permanently failed after ${attempt} attempts`);
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  return null;
+}
+
+
+
 async function completeAssignment(req, res) {
   try {
     const files = req.files || {};
-    const podFile = files.podImage && files.podImage[0];
-    const invoiceFile = files.invoiceImage && files.invoiceImage[0];
+    const podFile = files.podImage?.[0];
+    const invoiceFile = files.invoiceImage?.[0];
+    const { assignedTaskId, truckNo, driverName, invoiceId } = req.body;
 
-    const { assignedTaskId, truckNo, driverName ,invoiceId} = req.body;
-    let checklistRaw = req.body.checklist || req.body.checklistJson || req.body.checklistString || null;
-    if (!assignedTaskId) return res.status(400).json({ error: 'assignedTaskId required' });
-
-    let checklist = null;
-    if (checklistRaw) {
-      try {
-        checklist = typeof checklistRaw === 'string' ? JSON.parse(checklistRaw) : checklistRaw;
-      } catch (e) {
-        // if not JSON, treat as plain text
-        checklist = checklistRaw;
-      }
+    if (!assignedTaskId) {
+      return res.status(400).json({ error: "assignedTaskId is required" });
     }
 
-    const podImageBuffer = podFile ? podFile.buffer : null;
-    const invoiceImageBuffer = invoiceFile ? invoiceFile.buffer : null;
+    // 🧩 Parse checklist safely
+    let checklist = null;
+    try {
+      const raw = req.body.checklist || req.body.checklistJson || req.body.checklistString;
+      if (raw) checklist = typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch (err) {
+      console.warn(`[Checklist Parse] Failed to parse checklist JSON: ${err.message}`);
+    }
 
-  // build PDF buffer (await PDF generation)
-  const pdfBuffer = await buildPdfBuffer({ podImageBuffer, invoiceImageBuffer, checklist });
-
-
-  // move the assigned task to completed task in DB (transaction) -- this line will be used after upload
     const atId = Number(assignedTaskId);
     const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
-    if (!assigned) return res.status(404).json({ error: 'Assigned task not found' });
-    const description = assigned.description || 'NoDescription';
-// Prepare filename using Australian (Sydney) time
-const now = new Date();
-const options = { timeZone: "Australia/Sydney", hour12: false };
+    if (!assigned) return res.status(404).json({ error: "Assigned task not found" });
 
-// Format to Australian time components
-const formatter = new Intl.DateTimeFormat("en-AU", {
-  timeZone: "Australia/Sydney",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit"
-});
+    const description = (assigned.description || "NoDescription").replace(/[^\w\s-]/g, "_");
 
-const parts = formatter.formatToParts(now);
-const hours = parts.find(p => p.type === "hour").value;
-const minutes = parts.find(p => p.type === "minute").value;
-const seconds = parts.find(p => p.type === "second").value;
+    // ---------- 🗓️ Prepare date-based folder ----------
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2, "0");
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const yyyy = today.getFullYear();
+    const dateFolder = `${dd}-${mm}-${yyyy}`;
+    const baseFolder = process.env.ONEDRIVE_FOLDER || "FleetPODs";
+    const uploadFolder = `${baseFolder}/${dateFolder}`;
 
-const timeStr = `${hours}-${minutes}-${seconds}`;
-const filename = `POD_${invoiceId}_${description}_${timeStr}.pdf`;
+    // ---------- 🕒 Prepare timestamps ----------
+    const options = { timeZone: "Australia/Sydney", hour12: false };
+    const formatter = new Intl.DateTimeFormat("en-AU", {
+      timeZone: "Australia/Sydney",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const parts = formatter.formatToParts(today);
+    const timeStr = `${parts.find(p => p.type === "hour").value}-${parts.find(p => p.type === "minute").value}-${parts.find(p => p.type === "second").value}`;
 
-// upload to OneDrive
+    const baseFilename = `POD_${invoiceId || "NA"}_${description}_${timeStr}`;
+    const podFilename = `${uploadFolder}/${baseFilename}_POD.jpg`;
+    const invoiceFilename = `${uploadFolder}/${baseFilename}_INVOICE.jpg`;
+    const pdfFilename = `${uploadFolder}/${baseFilename}.pdf`;
 
-  
+    const podImageBuffer = podFile?.buffer;
+    const invoiceImageBuffer = invoiceFile?.buffer;
 
-    // upload to OneDrive
-    let uploadResult;
-    try {
-      uploadResult = await uploadPdfToOneDrive(pdfBuffer, filename);
-    } catch (e) {
-      console.error('OneDrive upload error', e?.response?.data || e.message || e);
-      return res.status(500).json({ error: 'Failed to upload PDF to OneDrive', details: e.message || e });
-    }
+    // ---------- 📤 Upload images with retry ----------
+    console.log(`[Task ${assignedTaskId}] Starting image uploads...`);
+    const [podUpload, invoiceUpload] = await Promise.all([
+      podImageBuffer
+        ? retryUpload(() => uploadPdfToOneDrive(podImageBuffer, podFilename), podFilename)
+        : Promise.resolve(null),
+      invoiceImageBuffer
+        ? retryUpload(() => uploadPdfToOneDrive(invoiceImageBuffer, invoiceFilename), invoiceFilename)
+        : Promise.resolve(null),
+    ]);
 
-    const podUrl = uploadResult.publicUrl || uploadResult.webUrl || uploadResult.id || null;
+    const podUrl = podUpload?.webUrl || null;
+    const invoiceUrl = invoiceUpload?.webUrl || null;
+    console.log(`[Task ${assignedTaskId}] Image uploads complete.`);
 
-  
-
-    // Build object for CompletedTask_DB - copy relevant fields
+    // ---------- 💾 Build object for CompletedTask_DB ----------
     const completedData = {
       taskId: assigned.taskId,
       orderCo: assigned.orderCo,
-      // copy fields you want; example:
+      orTy: assigned.orTy,
       orderNumber: assigned.orderNumber,
       branchPlant: assigned.branchPlant,
       customerPO: assigned.customerPO,
@@ -457,34 +482,59 @@ const filename = `POD_${invoiceId}_${description}_${timeStr}.pdf`;
       assignedAt: assigned.assignedAt,
       invoiceId: assigned.invoiceId,
       manifestNo: assigned.manifestNo,
-      POD: podUrl,
-      completedAt: new Date()
+      POD: null, // will be filled after PDF upload
+      PodImage: podUrl,
+      InvoiceImage: invoiceUrl,
+      completedAt: new Date(),
     };
 
-    // transaction: create completed and delete assigned
-    await prisma.$transaction([
-      prisma.completedTask_DB.create({ data: completedData }),
-      prisma.assignedTask_DB.delete({ where: { assignedTaskId: atId } })
-    ]);
-
-    return res.status(200).json({ message: 'Assignment completed', podUrl, uploadResult });
-  } catch (err) {
-    console.error('completeAssignment error', err);
-
-    // Try to mark task as attempted even if main transaction failed
+    // ---------- 💾 Transaction: Move to completed ----------
+    let completedRecord;
     try {
-      await prisma.assignedTask_DB.update({
-        where: { assignedTaskId: atId },
-        data: { isAttemptedToComplete: true },
-      });
-      console.log(`Marked assignedTaskId ${atId} as attempted to complete`);
-    } catch (updateErr) {
-      console.error('Failed to update isAttemptedToComplete flag:', updateErr);
+      const [created] = await prisma.$transaction([
+        prisma.completedTask_DB.create({ data: completedData }),
+        prisma.assignedTask_DB.delete({ where: { assignedTaskId: atId } }),
+      ]);
+      completedRecord = created;
+      console.log(`[Task ${assignedTaskId}] Moved to CompletedTask_DB.`);
+    } catch (err) {
+      console.error(`[Task ${assignedTaskId}] DB transaction failed: ${err.message}`);
+      return res.status(500).json({ error: "Database transaction failed." });
     }
 
-    return res.status(500).json({ error: 'Internal server error', details: err.message || err });
+    // ---------- ⚙️ Background PDF creation ----------
+    (async () => {
+      try {
+        const pdfBuffer = await buildPdfBuffer({ podImageBuffer, invoiceImageBuffer, checklist });
+        const pdfUpload = await retryUpload(() => uploadPdfToOneDrive(pdfBuffer, pdfFilename), pdfFilename);
+        const pdfUrl = pdfUpload?.webUrl || null;
+
+        if (pdfUrl) {
+          await prisma.completedTask_DB.update({
+            where: { completedTaskId: completedRecord.completedTaskId },
+            data: { POD: pdfUrl },
+          });
+          console.log(`[Task ${assignedTaskId}] PDF uploaded successfully.`);
+        } else {
+          console.warn(`[Task ${assignedTaskId}] PDF upload skipped (no URL).`);
+        }
+      } catch (err) {
+        console.error(`[Task ${assignedTaskId}] PDF generation/upload failed: ${err.message}`);
+      }
+    })();
+
+    // ---------- 🚀 Respond immediately ----------
+    return res.status(200).json({
+      message: "Assignment completed successfully. PDF generation running in background.",
+      podImageUrl: podUrl,
+      invoiceImageUrl: invoiceUrl,
+    });
+  } catch (err) {
+    console.error(`[Task ${req.body.assignedTaskId || "unknown"}] Fatal error: ${err.message}`);
+    return res.status(500).json({ error: "Unexpected server error." });
   }
 }
+
 
 
 async function driverSignup (req, res){
