@@ -589,7 +589,6 @@ async function driverLogin(req, res) {
     }
 };
 
-
 module.exports = {
   startAssignment,
   completeAssignment,

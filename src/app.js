@@ -33,6 +33,10 @@ const authRoutes= require('./modules/auth/auth.routes');
 const taskRoutes = require('./modules/task_assignments/task.routes');
 const gmailRoutes = require('./modules/gmail/gmail.routes');
 const driverRoutes = require('./modules/driver/driver.routes');
+const maintainenceRoutes = require('./modules/maintainence/maintainence.routes');
+
+// All API routes for maintenance
+app.use('/api/maintenance', maintainenceRoutes);
 
 //All API routes for authentication
 app.use('/api/auth', authRoutes);
