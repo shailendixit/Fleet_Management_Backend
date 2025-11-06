@@ -72,15 +72,7 @@ async function uploadPdfToOneDrive(pdfBuffer, filename) {
 
   // Delegated token flow (/me/drive)
   if (process.env.ONEDRIVE_REFRESH_TOKEN) {
-    // Build date-based folder name
-    // const today = new Date();
-    // const dd = String(today.getDate()).padStart(2, "0");
-    // const mm = String(today.getMonth() + 1).padStart(2, "0");
-    // const yyyy = today.getFullYear();
-    // const dateFolder = `${dd}-${mm}-${yyyy}`;
-
-    // Final path → FleetPODs/dateFolder/filename.pdf
-    // const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
+ 
     const uploadUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodedPath}:/content`;
 
     // Step 1: Upload the PDF
@@ -134,7 +126,7 @@ const today = new Date();
     const dateFolder = `${dd}-${mm}-${yyyy}`;
 
  
-  const encodedPath = encodeURIComponent(`${folder}/${dateFolder}/${filename}`);
+  const encodedPath = encodeURIComponent(`${filename}`);
   const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/${encodedPath}:/content`;
 
   const res = await axios.put(uploadUrl, pdfBuffer, {
@@ -150,25 +142,25 @@ const today = new Date();
   const fileId = res.data.id;
 let publicUrl = res.data.webUrl;
 
-try {
-  const linkRes = await retry(
-    () =>
-      axios.post(
-        `https://graph.microsoft.com/v1.0/users/${userId}/drive/items/${fileId}/createLink`,
-        { type: "view", scope: "anonymous" },
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          timeout: 15000
-        }
-      ),
-    3,
-    2000
-  );
-  publicUrl = linkRes.data.link.webUrl;
-  console.log("Public link created:", publicUrl);
-} catch (err) {
-  console.warn("createLink failed after retries:", err.response?.data || err.message);
-}
+// try {
+//   const linkRes = await retry(
+//     () =>
+//       axios.post(
+//         `https://graph.microsoft.com/v1.0/users/${userId}/drive/items/${fileId}/createLink`,
+//         { type: "view", scope: "anonymous" },
+//         {
+//           headers: { Authorization: `Bearer ${accessToken}` },
+//           timeout: 15000
+//         }
+//       ),
+//     3,
+//     2000
+//   );
+//   publicUrl = linkRes.data.link.webUrl;
+//   console.log("Public link created:", publicUrl);
+// } catch (err) {
+//   console.warn("createLink failed after retries:", err.response?.data || err.message);
+// }
 
 
   
