@@ -2,6 +2,7 @@ const PDFDocument = require('pdfkit');
 const axios = require('axios');
 const { Readable } = require('stream');
 const prisma = require('../../lib/prisma');
+const path = require('path');
 
 function bufferToStream(buffer) {
   const stream = new Readable();
@@ -9,6 +10,30 @@ function bufferToStream(buffer) {
   stream.push(null);
   return stream;
 }
+function encodeDrivePath(rawPath) {
+  // Encode each segment but keep slashes
+  return (rawPath || '')
+    .split('/')
+    .map(seg => encodeURIComponent(seg))
+    .join('/');
+}
+function extFromMimetype(mt) {
+  if (!mt) return 'jpg';
+  if (mt === 'image/jpeg') return 'jpg';
+  if (mt === 'image/png') return 'png';
+  if (mt === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+function contentTypeFromName(name) {
+  const n = (name || '').toLowerCase();
+  if (n.endsWith('.pdf')) return 'application/pdf';
+  if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+  if (n.endsWith('.png')) return 'image/png';
+  if (n.endsWith('.webp')) return 'image/webp';
+  return 'application/octet-stream';
+}
+
 let cachedToken = null;
 let cachedExpiry = 0;
 
@@ -18,14 +43,10 @@ async function getGraphToken() {
   const tenant = process.env.ONEDRIVE_TENANT_ID;
   const now = Date.now();
 
-  // 1️⃣ Return cached token if still valid
-  if (cachedToken && now < cachedExpiry) {
-    return cachedToken;
-  }
+  if (cachedToken && now < cachedExpiry) return cachedToken;
 
-  // If we have a refresh token configured, use delegated flow (suitable for personal accounts)
   const refreshToken = process.env.ONEDRIVE_REFRESH_TOKEN;
-  const redirectUri = process.env.ONEDRIVE_REDIRECT_URI; // optional for refresh grant
+  const redirectUri  = process.env.ONEDRIVE_REDIRECT_URI;
 
   if (refreshToken) {
     if (!clientId || !clientSecret) throw new Error('ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET are required for refresh token flow');
@@ -35,18 +56,18 @@ async function getGraphToken() {
     params.append('grant_type', 'refresh_token');
     params.append('refresh_token', refreshToken);
     if (redirectUri) params.append('redirect_uri', redirectUri);
-    // request scopes that include file access
     params.append('scope', 'offline_access files.readwrite openid profile');
 
     const tokenUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/token`;
     const tokenRes = await axios.post(tokenUrl, params.toString(), {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 10000
+      timeout: 20000
     });
-    return tokenRes.data.access_token;
+    cachedToken  = tokenRes.data.access_token;
+    cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000;
+    return cachedToken;
   }
 
-  // Fallback to app-only client credentials flow (requires tenant and app permissions)
   if (!tenant || !clientId || !clientSecret) {
     throw new Error('Missing OneDrive OAuth environment variables for app-only flow');
   }
@@ -61,113 +82,137 @@ async function getGraphToken() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     timeout: 20000
   });
-    cachedToken = tokenRes.data.access_token;
-  cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000; 
-  return tokenRes.data.access_token;
+  cachedToken  = tokenRes.data.access_token;
+  cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000;
+  return cachedToken;
 }
 
-async function uploadPdfToOneDrive(pdfBuffer, filename) {
+// Simple upload (<= 4 MB). We’ll prefer session upload but keep this.
+async function simpleUpload(buffer, driveRootUrl, name) {
   const accessToken = await getGraphToken();
-  const folder = process.env.ONEDRIVE_FOLDER || 'FleetPODs';
+  const ct = contentTypeFromName(name);
+  const pathPart = encodeDrivePath(name);
+  const url = `${driveRootUrl}/root:/${pathPart}:/content`;
+  const res = await axios.put(url, buffer, {
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': ct },
+    maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 300000
+  });
+  return res.data;
+}
 
-  // Delegated token flow (/me/drive)
-  if (process.env.ONEDRIVE_REFRESH_TOKEN) {
- 
-    const uploadUrl = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodedPath}:/content`;
+// Upload session for large files
+async function uploadViaSession(buffer, driveRootUrl, name, chunkSize = 5 * 1024 * 1024) {
+  const accessToken = await getGraphToken();
+  const pathPart = encodeDrivePath(name);
 
-    // Step 1: Upload the PDF
-    const res = await axios.put(uploadUrl, pdfBuffer, {
+  // 1) Create session
+  const createUrl = `${driveRootUrl}/root:/${pathPart}:/createUploadSession`;
+  const session = await axios.post(createUrl, {
+    item: {
+      '@microsoft.graph.conflictBehavior': 'replace',
+      name: path.basename(name),
+    }
+  }, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    timeout: 20000
+  });
+
+  const uploadUrl = session.data.uploadUrl;
+  const total = buffer.length;
+  let start = 0;
+
+  // 2) Upload chunks
+  while (start < total) {
+    const end = Math.min(start + chunkSize, total);
+    const chunk = buffer.slice(start, end);
+    const contentRange = `bytes ${start}-${end - 1}/${total}`;
+
+    await axios.put(uploadUrl, chunk, {
       headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/pdf"
+        'Content-Length': chunk.length,
+        'Content-Range': contentRange,
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
-      timeout: 300000 // allow large/slow uploads (5 min)
+      timeout: 300000
     });
 
-    // const fileId = res.data.id;
-    // console.log(res);
-    // // Step 2: Try to create public link
-    // let publicUrl = res.data.webUrl; // fallback to normal URL
-    // try {
-    //   const linkRes = await retry(
-    //     () =>
-    //       axios.post(
-    //         `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/createLink`,
-    //         { type: "view", scope: "anonymous" },
-    //         {
-    //           headers: { Authorization: `Bearer ${accessToken}` },
-    //           timeout: 15000 // short timeout (link creation is fast)
-    //         }
-    //       ),
-    //     3, // retries
-    //     2000 // delay between retries
-    //   );
-    //   publicUrl = linkRes.data.link.webUrl;
-    // } catch (err) {
-    //   console.warn("createLink failed after retries:", err.message);
-    // }
-
-    // Always return file metadata + a usable URL
-    return {
-      ...res.data,
-      publicUrl
-    };
+    start = end;
   }
 
-  // App-only flow requires ONEDRIVE_USER_ID
-  const userId = process.env.ONEDRIVE_USER_ID;
-  if (!userId) throw new Error("ONEDRIVE_USER_ID env var is required for app-only flow");
-const today = new Date();
-    const dd = String(today.getDate()).padStart(2, "0");
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const yyyy = today.getFullYear();
-    const dateFolder = `${dd}-${mm}-${yyyy}`;
-
- 
-  const encodedPath = encodeURIComponent(`${filename}`);
-  const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/${encodedPath}:/content`;
-
-  const res = await axios.put(uploadUrl, pdfBuffer, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/pdf"
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    timeout: 300000
+  // 3) Get item (last response can include it; if not, fetch)
+  // We’ll just return the parent folder + file path URL we already know:
+  // Best is to GET /root:/path after upload; but upload session final response normally returns driveItem.
+  // To be safe, do a lightweight GET:
+  const finalGet = await axios.get(`${driveRootUrl}/root:/${pathPart}`, {
+    headers: { Authorization: `Bearer ${accessToken}` }, timeout: 20000
   });
+  return finalGet.data;
+}
 
-  const fileId = res.data.id;
-let publicUrl = res.data.webUrl;
+async function uploadPdfToOneDrive(pdfBuffer, filename) {
+  // If caller passes a path (e.g., "pdf/XYZ.pdf"), keep it; else prefix into pdf/
+  const logical = filename.includes('/') ? filename : `pdf/${filename}`;
+  return await uploadToOneDrive(pdfBuffer, logical);
+}
+async function uploadToOneDrive(buffer, logicalPath) {
+  const usingRefresh = !!process.env.ONEDRIVE_REFRESH_TOKEN;
+  const baseFolder = process.env.ONEDRIVE_FOLDER || 'FleetPODs';
 
-// try {
-//   const linkRes = await retry(
-//     () =>
-//       axios.post(
-//         `https://graph.microsoft.com/v1.0/users/${userId}/drive/items/${fileId}/createLink`,
-//         { type: "view", scope: "anonymous" },
-//         {
-//           headers: { Authorization: `Bearer ${accessToken}` },
-//           timeout: 15000
-//         }
-//       ),
-//     3,
-//     2000
-//   );
-//   publicUrl = linkRes.data.link.webUrl;
-//   console.log("Public link created:", publicUrl);
-// } catch (err) {
-//   console.warn("createLink failed after retries:", err.response?.data || err.message);
-// }
+  const day = new Date();
+  const dd = String(day.getDate()).padStart(2, '0');
+  const mm = String(day.getMonth() + 1).padStart(2, '0');
+  const yyyy = day.getFullYear();
+  const dateFolder = `${dd}-${mm}-${yyyy}`;
 
+  // prepend base and date folder
+  const nameInDrive = `${baseFolder}/${dateFolder}/${logicalPath}`.replace(/\/\/+/g, '/');
 
-  
-  return {
-      ...res.data,
-      publicUrl
-    };
+  const root = usingRefresh
+    ? 'https://graph.microsoft.com/v1.0/me/drive'
+    : (() => {
+        const userId = process.env.ONEDRIVE_USER_ID;
+        if (!userId) throw new Error('ONEDRIVE_USER_ID env var is required for app-only flow');
+        return `https://graph.microsoft.com/v1.0/users/${userId}/drive`;
+      })();
+
+  const FOUR_MB = 4 * 1024 * 1024;
+  const pathPart = encodeDrivePath(nameInDrive);
+
+  if (buffer.length <= FOUR_MB) {
+    const accessToken = await getGraphToken();
+    const url = `${root}/root:/${pathPart}:/content`;
+    const res = await axios.put(url, buffer, {
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': contentTypeFromName(nameInDrive) },
+      maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 300000
+    });
+    return res.data;
+  }
+
+  // session upload for large files
+  const accessToken = await getGraphToken();
+  const createUrl = `${root}/root:/${pathPart}:/createUploadSession`;
+  const session = await axios.post(createUrl, {
+    item: { '@microsoft.graph.conflictBehavior': 'replace', name: path.basename(nameInDrive) }
+  }, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 20000 });
+
+  const uploadUrl = session.data.uploadUrl;
+  const chunkSize = 5 * 1024 * 1024;
+  let start = 0;
+  while (start < buffer.length) {
+    const end = Math.min(start + chunkSize, buffer.length);
+    const chunk = buffer.slice(start, end);
+    const contentRange = `bytes ${start}-${end - 1}/${buffer.length}`;
+    await axios.put(uploadUrl, chunk, {
+      headers: { 'Content-Length': chunk.length, 'Content-Range': contentRange },
+      maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 300000
+    });
+    start = end;
+  }
+  const finalGet = await axios.get(`${root}/root:/${pathPart}`, {
+    headers: { Authorization: `Bearer ${accessToken}` }, timeout: 20000
+  });
+  return finalGet.data;
 }
 
 // Simple retry helper
@@ -361,78 +406,135 @@ async function retryUpload(fn, filename, maxRetries = 3, delayMs = 1000) {
   return null;
 }
 
+function buildPdfBufferFromImages(podBuffers, invoiceBuffers, checklist) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ autoFirstPage: false });
+    const chunks = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const addImagePage = (buf, label) => {
+      doc.addPage({ size: 'A4', margin: 40 });
+      if (label) doc.fontSize(12).text(label, { underline: true }); 
+      doc.moveDown(0.5);
+      try {
+        doc.image(buf, { fit: [520, 700], align: 'center', valign: 'center' });
+      } catch {
+        doc.fontSize(10).fillColor('red').text('Image could not be embedded');
+        doc.fillColor('black');
+      }
+    };
+
+    // POD pages
+    if (podBuffers && podBuffers.length) {
+      podBuffers.forEach((b, i) => addImagePage(b, `POD ${i + 1}`));
+    } else {
+      doc.addPage({ size: 'A4', margin: 40 }).fontSize(12).text('No POD images provided');
+    }
+
+    // Invoice pages
+    if (invoiceBuffers && invoiceBuffers.length) {
+      invoiceBuffers.forEach((b, i) => addImagePage(b, `Invoice ${i + 1}`));
+    } else {
+      doc.addPage({ size: 'A4', margin: 40 }).fontSize(12).text('No Invoice images provided');
+    }
+
+    // Checklist
+    doc.addPage({ size: 'A4', margin: 40 });
+    doc.fontSize(12).text('Checklist / Comments:', { underline: true });
+    doc.moveDown();
+
+    try {
+      if (Array.isArray(checklist)) {
+        checklist.forEach((item, idx) => {
+          if (typeof item === 'string') doc.fontSize(11).text(`${idx + 1}. ${item}`);
+          else if (item && typeof item === 'object') {
+            const line = `${idx + 1}. ${item.point || item.title || ''}`.trim();
+            doc.fontSize(11).text(line);
+            if (item.comment) doc.fontSize(10).fillColor('gray').text(`   comment: ${item.comment}`).fillColor('black');
+            doc.moveDown(0.5);
+          } else {
+            doc.fontSize(11).text(`${idx + 1}. ${String(item)}`);
+          }
+        });
+      } else if (typeof checklist === 'object' && checklist) {
+        Object.entries(checklist).forEach(([k, v]) => doc.fontSize(11).text(`${k}: ${v}`));
+      } else if (typeof checklist === 'string' && checklist.trim()) {
+        doc.fontSize(11).text(checklist);
+      } else {
+        doc.fontSize(11).text('No checklist provided');
+      }
+    } catch {
+      doc.fontSize(11).text('Checklist parsing error');
+    }
+
+    doc.end();
+  });
+}
 
 
 async function completeAssignment(req, res) {
   try {
     const files = req.files || {};
-    const podFile = files.podImage?.[0];
-    const invoiceFile = files.invoiceImage?.[0];
+    // Multer config should use .array() for these fields
+    // e.g., upload.fields([{ name: 'podImages', maxCount: 10 }, { name: 'invoiceImages', maxCount: 10 }])
+    const podFiles = files.podImages || (files.podImage ? [files.podImage[0]] : []);
+    const invFiles = files.invoiceImages || (files.invoiceImage ? [files.invoiceImage[0]] : []);
+
     const { assignedTaskId, truckNo, driverName, invoiceId } = req.body;
+    if (!assignedTaskId) return res.status(400).json({ error: "assignedTaskId is required" });
 
-    if (!assignedTaskId) {
-      return res.status(400).json({ error: "assignedTaskId is required" });
-    }
-
-    // 🧩 Parse checklist safely
+    // Parse checklist
     let checklist = null;
     try {
       const raw = req.body.checklist || req.body.checklistJson || req.body.checklistString;
       if (raw) checklist = typeof raw === "string" ? JSON.parse(raw) : raw;
     } catch (err) {
-      console.warn(`[Checklist Parse] Failed to parse checklist JSON: ${err.message}`);
+      console.warn(`[Checklist Parse] Failed: ${err.message}`);
     }
 
     const atId = Number(assignedTaskId);
     const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
     if (!assigned) return res.status(404).json({ error: "Assigned task not found" });
 
-    const description = (assigned.description || "NoDescription").replace(/[^\w\s-]/g, "_");
-
-    // ---------- 🗓️ Prepare date-based folder ----------
-    const today = new Date();
-    const dd = String(today.getDate()).padStart(2, "0");
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const yyyy = today.getFullYear();
-    const dateFolder = `${dd}-${mm}-${yyyy}`;
+    const safeDesc = (assigned.description || "NoDescription").replace(/[^\w\s-]/g, "_");
     const baseFolder = process.env.ONEDRIVE_FOLDER || "FleetPODs";
-    const uploadFolder = `${baseFolder}/${dateFolder}`;
 
-    // ---------- 🕒 Prepare timestamps ----------
-    const options = { timeZone: "Australia/Sydney", hour12: false };
+    // Timestamp in Australia/Sydney for filenames
+    const now = new Date();
     const formatter = new Intl.DateTimeFormat("en-AU", {
-      timeZone: "Australia/Sydney",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+      timeZone: "Australia/Sydney", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
-    const parts = formatter.formatToParts(today);
+    const parts = formatter.formatToParts(now);
     const timeStr = `${parts.find(p => p.type === "hour").value}-${parts.find(p => p.type === "minute").value}-${parts.find(p => p.type === "second").value}`;
 
-    const baseFilename = `POD_${invoiceId || "NA"}_${description}_${timeStr}`;
-    const podFilename = `${uploadFolder}/${baseFilename}_POD.jpg`;
-    const invoiceFilename = `${uploadFolder}/${baseFilename}_INVOICE.jpg`;
-    const pdfFilename = `${uploadFolder}/${baseFilename}.pdf`;
+    const baseName = `POD_${invoiceId || "NA"}_${safeDesc}_${timeStr}`;
 
-    const podImageBuffer = podFile?.buffer;
-    const invoiceImageBuffer = invoiceFile?.buffer;
+    // Upload images (multiple) with clean names using chunked upload
+    const podUploads = [];
+    for (let i = 0; i < podFiles.length; i++) {
+      const f = podFiles[i];
+      const ext = extFromMimetype(f.mimetype);
+      const fname = `${baseName}_POD_${String(i + 1).padStart(2, '0')}.${ext}`;
+      const logicalPath = `images/${fname}`; // will be prefixed by date folder inside upload helper
+      const up = await retryUpload(() => uploadToOneDrive(f.buffer, logicalPath), fname);
+      podUploads.push(up);
+    }
 
-    // ---------- 📤 Upload images with retry ----------
-    console.log(`[Task ${assignedTaskId}] Starting image uploads...`);
-    const [podUpload, invoiceUpload] = await Promise.all([
-      podImageBuffer
-        ? retryUpload(() => uploadPdfToOneDrive(podImageBuffer, podFilename), podFilename)
-        : Promise.resolve(null),
-      invoiceImageBuffer
-        ? retryUpload(() => uploadPdfToOneDrive(invoiceImageBuffer, invoiceFilename), invoiceFilename)
-        : Promise.resolve(null),
-    ]);
+    const invUploads = [];
+    for (let i = 0; i < invFiles.length; i++) {
+      const f = invFiles[i];
+      const fname = `${baseName}_INVOICE_${String(i + 1).padStart(2, '0')}.jpg`;
+      const logicalPath = `images/${fname}`;
+      const up = await retryUpload(() => uploadToOneDrive(f.buffer, logicalPath), fname);
+      invUploads.push(up);
+    }
 
-    const podUrl = podUpload?.webUrl || null;
-    const invoiceUrl = invoiceUpload?.webUrl || null;
-    console.log(`[Task ${assignedTaskId}] Image uploads complete.`);
+    const podUrls = podUploads.map(u => u?.webUrl).filter(Boolean);
+    const invoiceUrls = invUploads.map(u => u?.webUrl).filter(Boolean);
 
-    // ---------- 💾 Build object for CompletedTask_DB ----------
+    // Prepare CompletedTask_DB object (same as yours, with arrays if you add columns later)
     const completedData = {
       taskId: assigned.taskId,
       orderCo: assigned.orderCo,
@@ -474,13 +576,12 @@ async function completeAssignment(req, res) {
       assignedAt: assigned.assignedAt,
       invoiceId: assigned.invoiceId,
       manifestNo: assigned.manifestNo,
-      POD: null, // will be filled after PDF upload
-      PodImage: podUrl,
-      InvoiceImage: invoiceUrl,
+      POD: null, // PDF URL to be filled after upload
+      PodImage: podUrls[0] || null,       // keep your fields; optionally add PodImagesJson column later
+      InvoiceImage: invoiceUrls[0] || null,
       completedAt: new Date(),
     };
 
-    // ---------- 💾 Transaction: Move to completed ----------
     let completedRecord;
     try {
       const [created] = await prisma.$transaction([
@@ -488,17 +589,19 @@ async function completeAssignment(req, res) {
         prisma.assignedTask_DB.delete({ where: { assignedTaskId: atId } }),
       ]);
       completedRecord = created;
-      console.log(`[Task ${assignedTaskId}] Moved to CompletedTask_DB.`);
     } catch (err) {
       console.error(`[Task ${assignedTaskId}] DB transaction failed: ${err.message}`);
       return res.status(500).json({ error: "Database transaction failed." });
     }
 
-    // ---------- ⚙️ Background PDF creation ----------
+    // Background PDF creation from all images
     (async () => {
       try {
-        const pdfBuffer = await buildPdfBuffer({ podImageBuffer, invoiceImageBuffer, checklist });
-        const pdfUpload = await retryUpload(() => uploadPdfToOneDrive(pdfBuffer, pdfFilename), pdfFilename);
+        const podBuffers = podFiles.map(f => f.buffer);
+        const invBuffers = invFiles.map(f => f.buffer);
+        const pdfBuffer = await buildPdfBufferFromImages(podBuffers, invBuffers, checklist);
+        const pdfName = `pdf/${baseName}.pdf`;
+        const pdfUpload = await retryUpload(() => uploadToOneDrive(pdfBuffer, pdfName), pdfName);
         const pdfUrl = pdfUpload?.webUrl || null;
 
         if (pdfUrl) {
@@ -506,26 +609,24 @@ async function completeAssignment(req, res) {
             where: { completedTaskId: completedRecord.completedTaskId },
             data: { POD: pdfUrl },
           });
-          console.log(`[Task ${assignedTaskId}] PDF uploaded successfully.`);
-        } else {
-          console.warn(`[Task ${assignedTaskId}] PDF upload skipped (no URL).`);
         }
       } catch (err) {
         console.error(`[Task ${assignedTaskId}] PDF generation/upload failed: ${err.message}`);
       }
     })();
 
-    // ---------- 🚀 Respond immediately ----------
     return res.status(200).json({
-      message: "Assignment completed successfully. PDF generation running in background.",
-      podImageUrl: podUrl,
-      invoiceImageUrl: invoiceUrl,
+      message: "Assignment completed. Files uploaded; PDF will be attached shortly.",
+      podImageUrls: podUrls,
+      invoiceImageUrls: invoiceUrls,
     });
+
   } catch (err) {
     console.error(`[Task ${req.body.assignedTaskId || "unknown"}] Fatal error: ${err.message}`);
     return res.status(500).json({ error: "Unexpected server error." });
   }
 }
+
 
 
 
