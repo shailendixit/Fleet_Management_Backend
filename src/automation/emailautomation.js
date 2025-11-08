@@ -1,6 +1,4 @@
 const { simpleParser } = require('mailparser');
-const fs = require('fs');
-const path = require('path');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 
@@ -119,16 +117,6 @@ async function sendMissingInvoiceAlert() {
                 }
             }
         }
-        if (lastErr) {
-            // Attempt Gmail API fallback before giving up (useful on platforms where SMTP is blocked)
-            try {
-                console.log('Attempting Gmail API fallback for missing invoice alert');
-                await sendMissingInvoiceAlertViaGmailAPI({ from: process.env.ALERT_EMAIL_FROM, to: process.env.ALERT_EMAIL_TO, subject: process.env.ALERT_EMAIL_SUBJECT, html, attachments });
-            } catch (apiErr) {
-                console.error('Gmail API fallback also failed:', apiErr);
-                throw lastErr; // throw original SMTP error for record
-            }
-        }
     } catch (e) {
         console.error('Failed to send missing invoice alert:', e);
     }
@@ -216,50 +204,56 @@ async function processParsedEmail(parsed) {
         }
 
         const taskController = require('../modules/task_assignments/task.controller');
+        const MAX_ATTACH = 15 * 1024 * 1024; // 15 MB cap (tune as needed)
 
         for (const attachment of parsed.attachments) {
             if (!attachment.filename) continue;
+
+            // size guard for all attachments
+            if (attachment.size && attachment.size > MAX_ATTACH) {
+                console.warn('Attachment too large, skipping:', attachment.filename, attachment.size);
+                continue;
+            }
+
             const lower = attachment.filename.toLowerCase();
-                // Accept xlsx/xls and csv attachments. For csv we'll try to convert to xlsx in-memory
-                if (!(lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv'))) continue;
+            // Accept xlsx/xls and csv attachments. For csv we'll try to convert to xlsx in-memory
+            if (!(lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv'))) continue;
 
-                // Normalize buffer and filename for handlers: if CSV, try to convert to XLSX
-                let processedAttachment = attachment;
-                if (lower.endsWith('.csv')) {
-                    try {
-                        // optional dependency - convert CSV to XLSX if exceljs is available
-                        const ExcelJS = require('exceljs');
-                        const { parse } = require('csv-parse/sync'); // CSV parser for robust handling
-                        const workbook = new ExcelJS.Workbook();
-                        const sheet = workbook.addWorksheet('Sheet1');
+            // Normalize buffer and filename for handlers: if CSV, try to convert to XLSX
+            let processedAttachment = attachment;
+            if (lower.endsWith('.csv')) {
+                try {
+                    // optional dependency - convert CSV to XLSX if exceljs is available
+                    const ExcelJS = require('exceljs');
+                    const { parse } = require('csv-parse/sync'); // CSV parser for robust handling
+                    const workbook = new ExcelJS.Workbook();
+                    const sheet = workbook.addWorksheet('Sheet1');
 
-                          // parse CSV content safely
-                        const csvText = attachment.content.toString('utf8');
-                        // parse CSV rows (simple split - robust enough for common cases). If exceljs has csv parsing we can use it.
-                         const records = parse(csvText, {
-                                skip_empty_lines: true,
-                                relax_quotes: true,
-                                relax_column_count: true,
-                                trim: true
-                            });
-                             // add rows to Excel sheet
-                                for (const row of records) {
-                                    sheet.addRow(row);
-                                }
-
-                        const xlsxBuffer = await workbook.xlsx.writeBuffer();
-                        processedAttachment = { filename: attachment.filename.replace(/\.csv$/i, '.xlsx'), content: xlsxBuffer };
-                        console.log('Converted CSV attachment to XLSX for', attachment.filename);
-                    } catch (e) {
-                        // exceljs not present or conversion failed; keep CSV buffer and let upload handlers decide
-                        console.warn('Failed to convert CSV to XLSX (exceljs unavailable or error). Passing raw CSV to handlers:', e?.message || e);
-                        processedAttachment = attachment; // keep original
+                    const csvText = attachment.content.toString('utf8');
+                    const records = parse(csvText, {
+                        bom: true,
+                        skip_empty_lines: true,
+                        relax_quotes: true,
+                        relax_column_count: true,
+                        trim: true
+                    });
+                    for (const row of records) {
+                        sheet.addRow(row);
                     }
-                }
 
-                if (subject.toLowerCase().includes('tasksheet')) {
+                    const xlsxBuffer = await workbook.xlsx.writeBuffer();
+                    processedAttachment = { filename: attachment.filename.replace(/\.csv$/i, '.xlsx'), content: xlsxBuffer };
+                    console.log('Converted CSV attachment to XLSX for', attachment.filename);
+                } catch (e) {
+                    // exceljs not present or conversion failed; keep CSV buffer and let upload handlers decide
+                    console.warn('Failed to convert CSV to XLSX (exceljs unavailable or error). Passing raw CSV to handlers:', e?.message || e);
+                    processedAttachment = attachment; // keep original
+                }
+            }
+
+            if (subject.toLowerCase().includes('tasksheet')) {
                 console.log('Detected TaskSheet -> calling uploadExcel in-process');
-                    const fakeReq = { file: { buffer: processedAttachment.content } };
+                const fakeReq = { file: { buffer: processedAttachment.content } };
                 const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadExcel result', c, b) }) };
                 try { await taskController.uploadExcel(fakeReq, fakeRes); }
                 catch (e) { console.error('uploadExcel failed:', e); }
@@ -350,13 +344,16 @@ const __processingMessageIds = new Set();
 global.__processedMessageIds = global.__processedMessageIds || new Map();
 // cleanup processed ids periodically
 if (!global.__processedMessageIdsCleanup) {
-    global.__processedMessageIdsCleanup = setInterval(() => {
-        const now = Date.now();
-        for (const [k, exp] of global.__processedMessageIds.entries()) {
-            if (exp <= now) global.__processedMessageIds.delete(k);
-        }
-    }, 60 * 1000); // every minute
+  const t = setInterval(() => {
+    const now = Date.now();
+    for (const [k, exp] of global.__processedMessageIds.entries()) {
+      if (exp <= now) global.__processedMessageIds.delete(k);
+    }
+  }, 60_000);
+  t.unref?.();
+  global.__processedMessageIdsCleanup = t;
 }
+
 
 async function processUnreadGmailMessages() {
     if (__isProcessingUnread) {
@@ -376,7 +373,11 @@ async function processUnreadGmailMessages() {
 
     // Query unread messages
     const listUrl = `https://graph.microsoft.com/v1.0/${userPath}/mailFolders/Inbox/messages?$filter=isRead eq false&$top=50`;
-        const listRes = await axios.get(listUrl, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 20000 });
+        const listRes = await retryAsync(
+          () => axios.get(listUrl, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 20000 }),
+          Number(process.env.OUTLOOK_LIST_RETRIES || 3),
+          Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000)
+        );
         const messages = (listRes.data && listRes.data.value) || [];
         if (!messages.length) { console.log('No unread messages found via Outlook Graph'); return; }
 
@@ -395,7 +396,11 @@ async function processUnreadGmailMessages() {
                 // endpoint: /users/{id}/messages/{id}/$value
                 const getUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(msgId)}/$value`;
                 console.log('Fetching message raw for', msgId);
-                const msgRes = await axios.get(getUrl, { headers: { Authorization: `Bearer ${accessToken}` }, responseType: 'arraybuffer', timeout: 40000 });
+                const msgRes = await retryAsync(
+                  () => axios.get(getUrl, { headers: { Authorization: `Bearer ${accessToken}` }, responseType: 'arraybuffer', timeout: 40000 }),
+                  Number(process.env.OUTLOOK_GET_RAW_RETRIES || 3),
+                  Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000)
+                );
                 const buffer = Buffer.from(msgRes.data);
 
                 // Process the email buffer
@@ -447,9 +452,9 @@ async function startWatch() {
         const userPath = tokenInfo.delegated ? 'me' : (userId ? `users/${userId}` : null);
         if (!userPath) throw new Error('OUTLOOK_USER_ID or ONEDRIVE_USER_ID must be set for creating Graph subscriptions');
 
-        // Before creating a new subscription, list and delete existing matching subscriptions
+        // Before creating a new subscription, delete ALL existing subscriptions
         try {
-            await deleteMatchingGraphSubscriptions({ accessToken, userPath, notifyUrl });
+            await deleteAllGraphSubscriptions({ accessToken });
         } catch (e) {
             console.warn('Failed to delete existing subscriptions (continuing to create new one):', e?.response?.data || e.message || e);
         }
@@ -470,31 +475,27 @@ async function startWatch() {
     }
 }
 
-// List subscriptions and delete those that match our resource / notificationUrl / clientState
-async function deleteMatchingGraphSubscriptions({ accessToken, userPath, notifyUrl }) {
+// Delete ALL existing subscriptions before creating a new one
+async function listAllGraphSubscriptions({ accessToken }) {
+    const axiosLocal = require('axios');
     const timeoutMs = Number(process.env.OUTLOOK_GRAPH_REQUEST_TIMEOUT_MS || 40000);
-    // Fetch subscriptions (may be paged; but usually small)
-    const res = await axios.get('https://graph.microsoft.com/v1.0/subscriptions', { headers: { Authorization: `Bearer ${accessToken}` }, timeout: timeoutMs });
-    const subs = (res.data && res.data.value) || [];
+    let url = 'https://graph.microsoft.com/v1.0/subscriptions';
+    const subs = [];
+    while (url) {
+        const r = await axiosLocal.get(url, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: timeoutMs });
+        subs.push(...((r.data && r.data.value) || []));
+        url = r.data && r.data['@odata.nextLink'] ? r.data['@odata.nextLink'] : null;
+    }
+    return subs;
+}
+
+async function deleteAllGraphSubscriptions({ accessToken }) {
+    const subs = await listAllGraphSubscriptions({ accessToken });
     if (!subs.length) return;
-
-    const ourResource = `${userPath}/mailFolders('Inbox')/messages`;
-    const clientState = process.env.OUTLOOK_SUBSCRIPTION_CLIENT_STATE || 'fleet_state';
-
-    const toDelete = subs.filter(s => {
-        if (!s) return false;
-        try {
-            if (s.resource === ourResource) return true;
-            if (s.notificationUrl === notifyUrl) return true;
-            if (s.clientState === clientState) return true;
-        } catch (e) { return false; }
-        return false;
-    });
-
-    for (const s of toDelete) {
+    for (const s of subs) {
         try {
             await deleteGraphSubscriptionWithRetry({ accessToken, subscriptionId: s.id });
-            console.log('Deleted existing subscription:', s.id, s.resource, s.notificationUrl);
+            console.log('Deleted subscription:', s.id, s.resource, s.notificationUrl);
         } catch (e) {
             console.warn('Failed to delete subscription', s.id, e?.response?.data || e.message || e);
         }
