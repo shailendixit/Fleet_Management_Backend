@@ -529,7 +529,7 @@ exports.getMyAssignedTasks = async (req, res) => {
 
     const tasks = await prisma.assignedTask_DB.findMany({
       where: {
-        driverName: username,
+        username: username,
         isCompleted: false,
       },
     });
