@@ -41,6 +41,13 @@ function datedFolderPrefix() {
   const dateFolder = `${dd}-${mm}-${yyyy}`;
   return `${baseFolder}/${dateFolder}`;
 }
+// NEW: sanitize description for filenames
+function safeDesc(str) {
+  return (str || 'NoDescription')
+    .replace(/[^\w\s-]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 80);
+}
 
 /* ---------------------- Graph auth ----------------------- */
 let cachedToken = null;
@@ -259,7 +266,7 @@ async function startAssignment(req, res) {
  * Create OneDrive upload sessions for POD & Invoice.
  * Body: { assignedTaskId, invoiceId }
  * Returns: { pod: {uploadUrl,itemPath,fileName}, invoice:{...}, chunkHintBytes }
- * Filenames: PodImage_<INV>_<TS>.jpg, InvoiceImage_<INV>_<TS>.jpg
+ * Filenames: PodImage_<INV>_<TS>_<Desc>.jpg, InvoiceImage_<INV>_<TS>_<Desc>.jpg
  * Stored under: <BASE>/<DD-MM-YYYY>/images/<fileName>
  */
 async function createUploadSessions(req, res) {
@@ -275,8 +282,11 @@ async function createUploadSessions(req, res) {
     const ts = nowTimestampAU();
     const folderPrefix = `${datedFolderPrefix()}/images`;
 
-    const podFileName = `PodImage_${inv}_${ts}.jpg`;
-    const invoiceFileName = `InvoiceImage_${inv}_${ts}.jpg`;
+    // NEW: include description in filenames
+    const desc = safeDesc(assigned.description);
+
+    const podFileName = `PodImage_${inv}_${ts}_${desc}.jpg`;
+    const invoiceFileName = `InvoiceImage_${inv}_${ts}_${desc}.jpg`;
 
     const [pod, invoice] = await Promise.all([
       createUploadSessionForLogicalPath(`${folderPrefix}/${podFileName}`),
@@ -297,10 +307,10 @@ async function createUploadSessions(req, res) {
 
 /**
  * Finalize after client uploads.
- * Body: {
- *   assignedTaskId, truckNo?, driverName?, invoiceId?,
- *   checklist?, podItems:[{itemPath?,webUrl?,id?}], invoiceItems:[{...}]
- * }
+ * Body (arrays style):
+ *   { assignedTaskId, truckNo?, driverName?, invoiceId?, checklist?, podItems:[{itemPath?,webUrl?,id?}], invoiceItems:[{...}] }
+ * OR single-field style (back-compat/Postman):
+ *   { assignedTaskId, truckNo?, driverName?, invoiceId?, checklist?, podItemPath, invoiceItemPath }
  */
 async function finalizeAssignmentUploads(req, res) {
   try {
@@ -311,6 +321,8 @@ async function finalizeAssignmentUploads(req, res) {
       invoiceId,
       podItems = [],
       invoiceItems = [],
+      podItemPath,        // <-- back-compat single item
+      invoiceItemPath,    // <-- back-compat single item
       checklist,
     } = req.body || {};
 
@@ -319,6 +331,16 @@ async function finalizeAssignmentUploads(req, res) {
     const atId = Number(assignedTaskId);
     const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
     if (!assigned) return res.status(404).json({ error: 'Assigned task not found' });
+
+    // Support both payload shapes (arrays vs single path strings)
+    const podArray = Array.isArray(podItems) ? [...podItems] : [];
+    if ((!podArray || podArray.length === 0) && podItemPath) {
+      podArray.push({ itemPath: podItemPath });
+    }
+    const invArray = Array.isArray(invoiceItems) ? [...invoiceItems] : [];
+    if ((!invArray || invArray.length === 0) && invoiceItemPath) {
+      invArray.push({ itemPath: invoiceItemPath });
+    }
 
     async function resolveItems(items) {
       const out = [];
@@ -333,8 +355,8 @@ async function finalizeAssignmentUploads(req, res) {
       return out.filter(x => x.webUrl);
     }
 
-    const podResolved = await resolveItems(podItems);
-    const invResolved = await resolveItems(invoiceItems);
+    const podResolved = await resolveItems(podArray);
+    const invResolved = await resolveItems(invArray);
 
     const podUrls = podResolved.map(x => x.webUrl);
     const invoiceUrls = invResolved.map(x => x.webUrl);
@@ -415,7 +437,9 @@ async function finalizeAssignmentUploads(req, res) {
 
         const inv = safeInvoiceId(invoiceId || assigned.invoiceId);
         const ts = nowTimestampAU();
-        const pdfLogical = `${datedFolderPrefix()}/pdf/POD_${inv}_${ts}.pdf`;
+        // NEW: include description in PDF name
+        const desc = safeDesc(assigned.description);
+        const pdfLogical = `${datedFolderPrefix()}/pdf/POD_${inv}_${ts}_${desc}.pdf`;
 
         const uploaded = await retryAsync(() => uploadToOneDrive(pdfBuf, pdfLogical), 3, 1500, 'uploadPDF');
         if (uploaded?.webUrl) {
@@ -534,7 +558,7 @@ async function testOneDriveUpload(req, res) {
    You can still POST multipart form-data like your screenshot:
    keys: checklist (text JSON), driverName, truckNo, assignedTaskId, invoiceId, invoiceImage (file), podImage (file)
    It will:
-   - Name files as: PodImage_<INV>_<TS>.jpg and InvoiceImage_<INV>_<TS>.jpg
+   - Name files as: PodImage_<INV>_<TS>_<Desc>.jpg and InvoiceImage_<INV>_<TS>_<Desc>.jpg
    - Upload to OneDrive
    - Create CompletedTask_DB, delete AssignedTask_DB
    - Build PDF in background
@@ -562,8 +586,10 @@ async function completeAssignment(req, res) {
     const ts = nowTimestampAU();
     const folder = `${datedFolderPrefix()}/images`;
 
-    const podName = `PodImage_${inv}_${ts}.jpg`;
-    const invoiceName = `InvoiceImage_${inv}_${ts}.jpg`;
+    // Include description in legacy multipart filenames too
+    const desc = safeDesc(assigned.description);
+    const podName = `PodImage_${inv}_${ts}_${desc}.jpg`;
+    const invoiceName = `InvoiceImage_${inv}_${ts}_${desc}.jpg`;
 
     const podUpload = podFile
       ? await retryAsync(() => uploadToOneDrive(podFile.buffer, `${folder}/${podName}`), 3, 1500, 'upload pod')
@@ -630,7 +656,7 @@ async function completeAssignment(req, res) {
         const podBufs = podFile ? [podFile.buffer] : [];
         const invBufs = invFile ? [invFile.buffer] : [];
         const pdfBuf = await buildPdfBufferFromImages(podBufs, invBufs, checklist);
-        const pdfLogical = `${datedFolderPrefix()}/pdf/POD_${inv}_${nowTimestampAU()}.pdf`;
+        const pdfLogical = `${datedFolderPrefix()}/pdf/POD_${inv}_${nowTimestampAU()}_${desc}.pdf`;
         const uploaded = await retryAsync(() => uploadToOneDrive(pdfBuf, pdfLogical), 3, 1500, 'uploadPDF');
         if (uploaded?.webUrl) {
           await prisma.completedTask_DB.update({
