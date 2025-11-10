@@ -25,11 +25,11 @@ router.post('/onedrive/test-upload', driverController.testOneDriveUpload);
 // - truckNo (string/number)
 // - driverName (string)
 // - checklist (string; JSON array/object)
-router.post(
-  '/completeAssignment',
-  upload.fields([{ name: 'podImage', maxCount: 1 }, { name: 'invoiceImage', maxCount: 1 }]),
-  driverController.completeAssignment
-);
+router.post('/createUploadSessions',driverController.createUploadSessions);
+
+router.post('/finalizeAssignmentUploads',driverController.finalizeAssignmentUploads);
+
+// router.post('/getAssignments', authenticateToken, driverController.getAssignments);
 
 router.post('/driverLogin', driverController.driverLogin);
 router.post('/driverSignup', driverController.driverSignup);
