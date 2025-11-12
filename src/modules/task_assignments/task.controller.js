@@ -65,7 +65,7 @@ exports.uploadExcel = async (req, res) => {
 
     const sheetName = workbook.SheetNames[0];
     const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName] || {});
-    logger.info({ action: 'uploadExcel', rows: Array.isArray(data) ? data.length : 0, ...ctx }, 'parsed excel rows');
+    // logger.info({ action: 'uploadExcel', rows: Array.isArray(data) ? data.length : 0, ...ctx }, 'parsed excel rows');
 
     // Format rows according to Prisma Task schema
     const formatted = data.map((row) => ({
@@ -109,14 +109,14 @@ exports.uploadExcel = async (req, res) => {
     const withOrderNumber = formatted.filter(
       (r) => r.orderNumber !== null && typeof r.orderNumber !== 'undefined'
     );
-    logger.info({ action: 'uploadExcel', validRows: withOrderNumber.length, ...ctx }, 'rows with orderNumber will be inserted');
+    // logger.info({ action: 'uploadExcel', validRows: withOrderNumber.length, ...ctx }, 'rows with orderNumber will be inserted');
 
     // Bulk insert
     const result = await prisma.task_DB.createMany({
       data: withOrderNumber,
       skipDuplicates: true,
     });
-    logger.info({ action: 'uploadExcel', inserted: result.count || 0, ...ctx }, 'createMany completed');
+    // logger.info({ action: 'uploadExcel', inserted: result.count || 0, ...ctx }, 'createMany completed');
 
     // cleanup file path if present
     try {
@@ -140,7 +140,7 @@ exports.uploadExcel = async (req, res) => {
 // ----------------- POPULATE DRIVER DB -----------------
 exports.populateDriverDB = async (req, res) => {
   const ctx = callerInfo(req);
-  logger.info({ action: 'populateDriverDB', ...ctx }, 'populateDriverDB called');
+  // logger.info({ action: 'populateDriverDB', ...ctx }, 'populateDriverDB called');
 
   try {
     const filePath = req.file && req.file.path;
@@ -211,7 +211,7 @@ exports.assignTasks = async (req, res) => {
   const ctx = callerInfo(req);
   try {
     const { tasks } = req.body;
-    logger.info({ action: 'assignTasks', count: Array.isArray(tasks) ? tasks.length : 0, ...ctx }, 'assignTasks called');
+    // logger.info({ action: 'assignTasks', count: Array.isArray(tasks) ? tasks.length : 0, ...ctx }, 'assignTasks called');
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       logger.warn({ action: 'assignTasks', ...ctx }, 'invalid tasks array');
@@ -279,14 +279,14 @@ exports.assignTasks = async (req, res) => {
 
       if (assignedRecords.length > 0) {
         const created = await tx.assignedTask_DB.createMany({ data: assignedRecords });
-        logger.info({ action: 'assignTasks', created: created.count || 0, ...ctx }, 'assigned tasks created');
+        // logger.info({ action: 'assignTasks', created: created.count || 0, ...ctx }, 'assigned tasks created');
 
         await tx.task_DB.deleteMany({
           where: {
             taskId: { in: assignedRecords.map((r) => r.taskId) },
           },
         });
-        logger.debug({ action: 'assignTasks', removedFromTaskDB: assignedRecords.length, ...ctx }, 'moved tasks to assignedTask_DB');
+        // logger.debug({ action: 'assignTasks', removedFromTaskDB: assignedRecords.length, ...ctx }, 'moved tasks to assignedTask_DB');
       } else {
         logger.warn({ action: 'assignTasks', ...ctx }, 'no matching tasks found to assign');
       }
@@ -314,7 +314,7 @@ exports.getLocation = async (req, res) => {
   const ctx = callerInfo(req);
   try {
     const { NETSTAR_BASE_URL, NETSTAR_USERNAME, NETSTAR_PASSWORD } = process.env;
-    logger.info({ action: 'getLocation', url: NETSTAR_BASE_URL, ...ctx }, 'fetching Netstar data');
+    // logger.info({ action: 'getLocation', url: NETSTAR_BASE_URL, ...ctx }, 'fetching Netstar data');
 
     const response = await axios.get(NETSTAR_BASE_URL, {
       auth: {
@@ -355,7 +355,7 @@ exports.getTasksWithoutInvoiceExcel = async (req, res) => {
     await workbook.xlsx.write(res);
     res.end();
 
-    logger.info({ action: 'getTasksWithoutInvoiceExcel', rows: tasks.length, ...ctx }, 'excel generated');
+    // logger.info({ action: 'getTasksWithoutInvoiceExcel', rows: tasks.length, ...ctx }, 'excel generated');
   } catch (err) {
     logger.error({ err: err?.message || err, ...ctx }, 'Excel Export Error');
     return res.status(500).json({ error: 'Failed to export Excel' });
@@ -387,7 +387,7 @@ exports.updateInvoiceManifest = async (req, res) => {
   const ctx = callerInfo(req);
   try {
     const { updates } = req.body;
-    logger.info({ action: 'updateInvoiceManifest', updatesCount: Array.isArray(updates) ? updates.length : 0, ...ctx }, 'updateInvoiceManifest called');
+    // logger.info({ action: 'updateInvoiceManifest', updatesCount: Array.isArray(updates) ? updates.length : 0, ...ctx }, 'updateInvoiceManifest called');
 
     if (!Array.isArray(updates) || updates.length === 0) {
       logger.warn({ action: 'updateInvoiceManifest', ...ctx }, 'invalid updates array');
@@ -414,7 +414,7 @@ exports.updateInvoiceManifest = async (req, res) => {
       }
     });
 
-    logger.info({ action: 'updateInvoiceManifest', ...ctx }, 'updates applied');
+    // logger.info({ action: 'updateInvoiceManifest', ...ctx }, 'updates applied');
     return res.status(200).json({ message: 'Updates applied' });
   } catch (err) {
     logger.error({ err: err?.message || err, ...ctx }, 'Update Invoice/Manifest Error');
@@ -425,7 +425,7 @@ exports.updateInvoiceManifest = async (req, res) => {
 // Upload invoice Excel and update AssignedTask_DB records by orderNumber
 exports.uploadInvoiceExcel = async (req, res) => {
   const ctx = callerInfo(req);
-  logger.info({ action: 'uploadInvoiceExcel', ...ctx }, 'uploadInvoiceExcel called');
+  // logger.info({ action: 'uploadInvoiceExcel', ...ctx }, 'uploadInvoiceExcel called');
 
   try {
     if (!req.file || (!req.file.path && !req.file.buffer)) {
@@ -449,7 +449,7 @@ exports.uploadInvoiceExcel = async (req, res) => {
     }
 
     const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName] || {});
-    logger.info({ action: 'uploadInvoiceExcel', rows: Array.isArray(rows) ? rows.length : 0, ...ctx }, 'parsed rows');
+    // logger.info({ action: 'uploadInvoiceExcel', rows: Array.isArray(rows) ? rows.length : 0, ...ctx }, 'parsed rows');
 
     const normalize = (key) => (key || '').toString().trim().toLowerCase();
 
@@ -534,7 +534,7 @@ exports.uploadInvoiceExcel = async (req, res) => {
       logger.warn({ err: e?.message || e, ...ctx }, 'File cleanup failed');
     }
 
-    logger.info({ action: 'uploadInvoiceExcel', updatedCount, totalOrders: Object.keys(updates).length, ...ctx }, 'invoice sheet processed');
+    // logger.info({ action: 'uploadInvoiceExcel', updatedCount, totalOrders: Object.keys(updates).length, ...ctx }, 'invoice sheet processed');
 
     return res.status(200).json({
       message: 'Invoice sheet processed',
