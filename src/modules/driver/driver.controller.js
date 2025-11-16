@@ -68,7 +68,7 @@ async function getGraphToken() {
   const now = Date.now();
 
   if (cachedToken && now < cachedExpiry) {
-    // logger.debug({ ttlMs: cachedExpiry - now }, 'Using cached Graph token');
+    logger.debug({ ttlMs: cachedExpiry - now }, 'Using cached Graph token');
     return cachedToken;
   }
 
@@ -77,11 +77,11 @@ async function getGraphToken() {
 
   if (refreshToken) {
     if (!clientId || !clientSecret) {
-      // logger.error('ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET required for refresh flow');
+      logger.error('ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET required for refresh flow');
       throw new Error('ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET required');
     }
     try {
-      // logger.info('Requesting Graph token via refresh_token (app user flow)');
+      logger.info('Requesting Graph token via refresh_token (app user flow)');
       const params = new URLSearchParams();
       params.append('client_id', clientId);
       params.append('client_secret', clientSecret);
@@ -111,7 +111,7 @@ async function getGraphToken() {
   }
 
   try {
-    // logger.info('Requesting Graph token via client_credentials (app-only flow)');
+    logger.info('Requesting Graph token via client_credentials (app-only flow)');
     const params = new URLSearchParams();
     params.append('client_id', clientId);
     params.append('client_secret', clientSecret);
@@ -125,7 +125,7 @@ async function getGraphToken() {
     );
     cachedToken = tokenRes.data.access_token;
     cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000;
-    // logger.info({ expiresIn: tokenRes.data.expires_in }, 'Obtained Graph token (client_credentials)');
+    logger.info({ expiresIn: tokenRes.data.expires_in }, 'Obtained Graph token (client_credentials)');
     return cachedToken;
   } catch (e) {
     logger.error({ msg: 'Graph token (client_credentials) error', err: e?.message || e });
@@ -137,7 +137,7 @@ function driveRootBase() {
   if (process.env.ONEDRIVE_REFRESH_TOKEN) return 'https://graph.microsoft.com/v1.0/me/drive';
   const userId = process.env.ONEDRIVE_USER_ID;
   if (!userId) {
-    // logger.error('ONEDRIVE_USER_ID is required for app-only flow');
+    logger.error('ONEDRIVE_USER_ID is required for app-only flow');
     throw new Error('ONEDRIVE_USER_ID is required for app-only flow');
   }
   return `https://graph.microsoft.com/v1.0/users/${userId}/drive`;
@@ -373,7 +373,7 @@ async function finalizeAssignmentUploads(req, res) {
     if (!assignedTaskId) return res.status(400).json({ error: 'assignedTaskId is required' });
 
     const atId = Number(assignedTaskId);
-    // logger.info({ assignedTaskId: atId, truckNo: truckNo ?? null, driverName: driverName ?? null }, 'finalizeAssignmentUploads called');
+    logger.info({ assignedTaskId: atId, truckNo: truckNo ?? null, driverName: driverName ?? null }, 'finalizeAssignmentUploads called');
 
     const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
     if (!assigned) {
@@ -532,7 +532,7 @@ async function driverSignup(req, res) {
         status: status || 'available', username, password
       },
     });
-    // logger.info({ username, truckNo }, 'Driver created');
+    logger.info({ username, truckNo }, 'Driver created');
     return res.status(201).json({ message: 'Driver created successfully', driver });
   } catch (error) {
     logger.error({ err: error?.message || error }, 'driverSignup error');
@@ -552,7 +552,7 @@ async function driverLogin(req, res) {
       logger.warn({ username }, 'Invalid password attempt');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
-    // logger.info({ username, truckNo: driver.truckNo }, 'Driver login successful');
+    logger.info({ username, truckNo: driver.truckNo }, 'Driver login successful');
     return res.status(200).json({ message: 'Login successful', truckNo: driver.truckNo, driverName: driver.driverName });
   } catch (error) {
     logger.error({ err: error?.message || error }, 'driverLogin error');
