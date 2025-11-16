@@ -4,14 +4,6 @@ const axios = require('axios');
 const { Readable } = require('stream');
 const prisma = require('../../lib/prisma');
 const path = require('path');
-const pino = require('pino');
-
-// --- logger ---
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  base: { service: 'driver-controller' },
-  timestamp: pino.stdTimeFunctions.isoTime,
-});
 
 /* ---------------------- small utils ---------------------- */
 function encodeDrivePath(rawPath) {
@@ -67,79 +59,54 @@ async function getGraphToken() {
   const tenant = process.env.ONEDRIVE_TENANT_ID;
   const now = Date.now();
 
-  if (cachedToken && now < cachedExpiry) {
-    logger.debug({ ttlMs: cachedExpiry - now }, 'Using cached Graph token');
-    return cachedToken;
-  }
+  if (cachedToken && now < cachedExpiry) return cachedToken;
 
   const refreshToken = process.env.ONEDRIVE_REFRESH_TOKEN;
   const redirectUri = process.env.ONEDRIVE_REDIRECT_URI;
 
   if (refreshToken) {
-    if (!clientId || !clientSecret) {
-      logger.error('ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET required for refresh flow');
-      throw new Error('ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET required');
-    }
-    try {
-      logger.info('Requesting Graph token via refresh_token (app user flow)');
-      const params = new URLSearchParams();
-      params.append('client_id', clientId);
-      params.append('client_secret', clientSecret);
-      params.append('grant_type', 'refresh_token');
-      params.append('refresh_token', refreshToken);
-      if (redirectUri) params.append('redirect_uri', redirectUri);
-      params.append('scope', 'offline_access files.readwrite openid profile');
-
-      const tokenRes = await axios.post(
-        'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-        params.toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
-      );
-      cachedToken = tokenRes.data.access_token;
-      cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000;
-      logger.info({ expiresIn: tokenRes.data.expires_in }, 'Obtained Graph token (refresh flow)');
-      return cachedToken;
-    } catch (e) {
-      logger.error({ msg: 'Graph token (refresh) error', err: e?.message || e });
-      throw e;
-    }
-  }
-
-  if (!tenant || !clientId || !clientSecret) {
-    logger.error('Missing OneDrive OAuth env for app-only flow');
-    throw new Error('Missing OneDrive OAuth env for app-only flow');
-  }
-
-  try {
-    logger.info('Requesting Graph token via client_credentials (app-only flow)');
+    if (!clientId || !clientSecret) throw new Error('ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET required');
     const params = new URLSearchParams();
     params.append('client_id', clientId);
     params.append('client_secret', clientSecret);
-    params.append('scope', 'https://graph.microsoft.com/.default');
-    params.append('grant_type', 'client_credentials');
+    params.append('grant_type', 'refresh_token');
+    params.append('refresh_token', refreshToken);
+    if (redirectUri) params.append('redirect_uri', redirectUri);
+    params.append('scope', 'offline_access files.readwrite openid profile');
 
     const tokenRes = await axios.post(
-      `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
+      'https://login.microsoftonline.com/common/oauth2/v2.0/token',
       params.toString(),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
     );
     cachedToken = tokenRes.data.access_token;
     cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000;
-    logger.info({ expiresIn: tokenRes.data.expires_in }, 'Obtained Graph token (client_credentials)');
     return cachedToken;
-  } catch (e) {
-    logger.error({ msg: 'Graph token (client_credentials) error', err: e?.message || e });
-    throw e;
   }
+
+  if (!tenant || !clientId || !clientSecret) {
+    throw new Error('Missing OneDrive OAuth env for app-only flow');
+  }
+  const params = new URLSearchParams();
+  params.append('client_id', clientId);
+  params.append('client_secret', clientSecret);
+  params.append('scope', 'https://graph.microsoft.com/.default');
+  params.append('grant_type', 'client_credentials');
+
+  const tokenRes = await axios.post(
+    `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
+    params.toString(),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
+  );
+  cachedToken = tokenRes.data.access_token;
+  cachedExpiry = now + (tokenRes.data.expires_in - 180) * 1000;
+  return cachedToken;
 }
 
 function driveRootBase() {
   if (process.env.ONEDRIVE_REFRESH_TOKEN) return 'https://graph.microsoft.com/v1.0/me/drive';
   const userId = process.env.ONEDRIVE_USER_ID;
-  if (!userId) {
-    logger.error('ONEDRIVE_USER_ID is required for app-only flow');
-    throw new Error('ONEDRIVE_USER_ID is required for app-only flow');
-  }
+  if (!userId) throw new Error('ONEDRIVE_USER_ID is required for app-only flow');
   return `https://graph.microsoft.com/v1.0/users/${userId}/drive`;
 }
 
@@ -149,7 +116,6 @@ async function createUploadSessionForLogicalPath(logicalPath) {
   const root = driveRootBase();
   const pathPart = encodeDrivePath(logicalPath);
   const url = `${root}/root:/${pathPart}:/createUploadSession`;
-  logger.info({ logicalPath }, 'Creating upload session');
   const res = await axios.post(
     url,
     { item: { '@microsoft.graph.conflictBehavior': 'replace', name: path.basename(logicalPath) } },
@@ -191,7 +157,6 @@ async function uploadToOneDrive(buffer, logicalPath) {
   const FOUR_MB = 4 * 1024 * 1024;
 
   if (buffer.length <= FOUR_MB) {
-    logger.info({ logicalPath, size: buffer.length }, 'Uploading small file (direct PUT)');
     const res = await axios.put(
       `${root}/root:/${pathPart}:/content`,
       buffer,
@@ -203,7 +168,6 @@ async function uploadToOneDrive(buffer, logicalPath) {
     return res.data;
   }
 
-  logger.info({ logicalPath, size: buffer.length }, 'Uploading large file (session)');
   // session upload for large files
   const session = await axios.post(
     `${root}/root:/${pathPart}:/createUploadSession`,
@@ -217,7 +181,6 @@ async function uploadToOneDrive(buffer, logicalPath) {
     const end = Math.min(start + chunkSize, buffer.length);
     const chunk = buffer.slice(start, end);
     const contentRange = `bytes ${start}-${end - 1}/${buffer.length}`;
-    logger.debug({ start, end, total: buffer.length }, 'Uploading chunk');
     await axios.put(uploadUrl, chunk, {
       headers: { 'Content-Length': chunk.length, 'Content-Range': contentRange },
       maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 300000
@@ -229,18 +192,14 @@ async function uploadToOneDrive(buffer, logicalPath) {
 async function retryAsync(fn, attempts = 3, baseDelay = 1500, label = '') {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
-    try { 
-      if (i > 0) logger.info({ label, attempt: i + 1 }, 'Retry attempt');
-      return await fn(); 
-    }
+    try { return await fn(); }
     catch (e) {
       lastErr = e;
       const wait = baseDelay * Math.pow(2, i);
-      logger.warn({ label, attempt: i + 1, err: e?.response?.status || e?.code || e?.message }, 'Retry failed');
+      console.warn(`[retry] ${label} attempt ${i + 1}/${attempts}:`, e?.response?.status || e?.code || e?.message);
       await new Promise(r => setTimeout(r, wait));
     }
   }
-  logger.error({ label, attempts, err: lastErr?.message || lastErr }, 'All retry attempts failed');
   throw lastErr;
 }
 
@@ -296,10 +255,9 @@ async function startAssignment(req, res) {
       where: { assignedTaskId: Number(assignedTaskId) },
       data,
     });
-    logger.info({ assignedTaskId }, 'Assignment started');
     return res.status(200).json({ message: 'Assignment started', updated });
   } catch (err) {
-    logger.error({ err: err?.message || err }, 'startAssignment error');
+    console.error('startAssignment error', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -308,6 +266,8 @@ async function startAssignment(req, res) {
  * Create OneDrive upload sessions for POD & Invoice.
  * Body: { assignedTaskId, invoiceId }
  * Returns: { pod: {uploadUrl,itemPath,fileName}, invoice:{...}, chunkHintBytes }
+ * Filenames: PodImage_<INV>_<TS>_<Desc>.jpg, InvoiceImage_<INV>_<TS>_<Desc>.jpg
+ * Stored under: <BASE>/<DD-MM-YYYY>/images/<fileName>
  */
 async function createUploadSessions(req, res) {
   try {
@@ -315,13 +275,8 @@ async function createUploadSessions(req, res) {
     if (!assignedTaskId) return res.status(400).json({ error: 'assignedTaskId is required' });
 
     const atId = Number(assignedTaskId);
-    logger.info({ assignedTaskId: atId, invoiceId: invoiceId || 'none' }, 'createUploadSessions called');
-
     const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
-    if (!assigned) {
-      logger.warn({ assignedTaskId: atId }, 'Assigned task not found');
-      return res.status(404).json({ error: 'Assigned task not found' });
-    }
+    if (!assigned) return res.status(404).json({ error: 'Assigned task not found' });
 
     const inv = safeInvoiceId(invoiceId || assigned.invoiceId);
     const ts = nowTimestampAU();
@@ -333,14 +288,11 @@ async function createUploadSessions(req, res) {
     const podFileName = `PodImage_${inv}_${ts}_${desc}.jpg`;
     const invoiceFileName = `InvoiceImage_${inv}_${ts}_${desc}.jpg`;
 
-    logger.debug({ podFileName, invoiceFileName, folderPrefix }, 'Prepared logical file names');
-
     const [pod, invoice] = await Promise.all([
-      retryAsync(() => createUploadSessionForLogicalPath(`${folderPrefix}/${podFileName}`), 3, 1500, 'createPodSession'),
-      retryAsync(() => createUploadSessionForLogicalPath(`${folderPrefix}/${invoiceFileName}`), 3, 1500, 'createInvoiceSession'),
+      createUploadSessionForLogicalPath(`${folderPrefix}/${podFileName}`),
+      createUploadSessionForLogicalPath(`${folderPrefix}/${invoiceFileName}`),
     ]);
 
-    logger.info({ assignedTaskId: atId, podPath: pod.itemPath, invoicePath: invoice.itemPath }, 'Upload sessions created');
     return res.status(200).json({
       assignedTaskId: atId,
       pod,
@@ -348,13 +300,17 @@ async function createUploadSessions(req, res) {
       chunkHintBytes: 5 * 1024 * 1024,
     });
   } catch (e) {
-    logger.error({ err: e?.response?.data || e?.message || e }, 'createUploadSessions error');
+    console.error('createUploadSessions error', e?.response?.data || e.message || e);
     return res.status(500).json({ error: 'Failed to create upload sessions' });
   }
 }
 
 /**
  * Finalize after client uploads.
+ * Body (arrays style):
+ *   { assignedTaskId, truckNo?, driverName?, invoiceId?, checklist?, podItems:[{itemPath?,webUrl?,id?}], invoiceItems:[{...}] }
+ * OR single-field style (back-compat/Postman):
+ *   { assignedTaskId, truckNo?, driverName?, invoiceId?, checklist?, podItemPath, invoiceItemPath }
  */
 async function finalizeAssignmentUploads(req, res) {
   try {
@@ -365,22 +321,18 @@ async function finalizeAssignmentUploads(req, res) {
       invoiceId,
       podItems = [],
       invoiceItems = [],
-      podItemPath,
-      invoiceItemPath,
+      podItemPath,        // <-- back-compat single item
+      invoiceItemPath,    // <-- back-compat single item
       checklist,
     } = req.body || {};
 
     if (!assignedTaskId) return res.status(400).json({ error: 'assignedTaskId is required' });
 
     const atId = Number(assignedTaskId);
-    logger.info({ assignedTaskId: atId, truckNo: truckNo ?? null, driverName: driverName ?? null }, 'finalizeAssignmentUploads called');
-
     const assigned = await prisma.assignedTask_DB.findUnique({ where: { assignedTaskId: atId } });
-    if (!assigned) {
-      logger.warn({ assignedTaskId: atId }, 'Assigned task not found');
-      return res.status(404).json({ error: 'Assigned task not found' });
-    }
+    if (!assigned) return res.status(404).json({ error: 'Assigned task not found' });
 
+    // Support both payload shapes (arrays vs single path strings)
     const podArray = Array.isArray(podItems) ? [...podItems] : [];
     if ((!podArray || podArray.length === 0) && podItemPath) {
       podArray.push({ itemPath: podItemPath });
@@ -393,15 +345,11 @@ async function finalizeAssignmentUploads(req, res) {
     async function resolveItems(items) {
       const out = [];
       for (const it of items) {
-        try {
-          if (it?.webUrl && it?.id) { out.push({ webUrl: it.webUrl, id: it.id, itemPath: it.itemPath || null }); continue; }
-          if (it?.webUrl && !it?.id) { out.push({ webUrl: it.webUrl, id: null, itemPath: it.itemPath || null }); continue; }
-          if (it?.itemPath) {
-            const d = await retryAsync(() => getDriveItemByPath(it.itemPath), 3, 1500, 'getByPath');
-            out.push({ webUrl: d?.webUrl || null, id: d?.id || null, itemPath: it.itemPath });
-          }
-        } catch (e) {
-          logger.warn({ item: it, err: e?.message || e }, 'resolveItems: skipping item after error');
+        if (it?.webUrl && it?.id) { out.push({ webUrl: it.webUrl, id: it.id, itemPath: it.itemPath || null }); continue; }
+        if (it?.webUrl && !it?.id) { out.push({ webUrl: it.webUrl, id: null, itemPath: it.itemPath || null }); continue; }
+        if (it?.itemPath) {
+          const d = await retryAsync(() => getDriveItemByPath(it.itemPath), 3, 1500, 'getByPath');
+          out.push({ webUrl: d?.webUrl || null, id: d?.id || null, itemPath: it.itemPath });
         }
       }
       return out.filter(x => x.webUrl);
@@ -460,8 +408,6 @@ async function finalizeAssignmentUploads(req, res) {
       completedAt: new Date(),
     };
 
-    logger.info({ assignedTaskId: atId, podFound: podUrls.length, invoiceFound: invoiceUrls.length }, 'Creating completed task record');
-
     const [created] = await prisma.$transaction([
       prisma.completedTask_DB.create({ data: completedData }),
       prisma.assignedTask_DB.delete({ where: { assignedTaskId: atId } }),
@@ -470,7 +416,6 @@ async function finalizeAssignmentUploads(req, res) {
     // Background PDF
     (async () => {
       try {
-        logger.info({ assignedTaskId: atId }, 'Starting background PDF job');
         async function collectBuffers(resolvedArr) {
           const bufs = [];
           for (const r of resolvedArr) {
@@ -481,7 +426,7 @@ async function finalizeAssignmentUploads(req, res) {
               );
               if (b) bufs.push(b);
             } catch (e) {
-              logger.warn({ assignedTaskId: atId, item: r, err: e?.message || e }, 'skip one file (download)');
+              console.warn('skip one file (download)', e?.message || e);
             }
           }
           return bufs;
@@ -492,6 +437,7 @@ async function finalizeAssignmentUploads(req, res) {
 
         const inv = safeInvoiceId(invoiceId || assigned.invoiceId);
         const ts = nowTimestampAU();
+        // NEW: include description in PDF name
         const desc = safeDesc(assigned.description);
         const pdfLogical = `${datedFolderPrefix()}/pdf/POD_${inv}_${ts}_${desc}.pdf`;
 
@@ -501,23 +447,19 @@ async function finalizeAssignmentUploads(req, res) {
             where: { completedTaskId: created.completedTaskId },
             data: { POD: uploaded.webUrl },
           });
-          logger.info({ assignedTaskId: atId, pdfUrl: uploaded.webUrl }, 'PDF created and attached');
-        } else {
-          logger.warn({ assignedTaskId: atId }, 'PDF uploaded but no webUrl returned');
         }
       } catch (e) {
-        logger.error({ assignedTaskId: atId, err: e?.message || e }, 'Background PDF job failed');
+        console.error(`[Task ${assignedTaskId}] PDF build/upload failed:`, e?.message || e);
       }
     })();
 
-    logger.info({ assignedTaskId: atId }, 'Finalize completed successfully');
     return res.status(200).json({
       message: 'Assignment completed. Images uploaded; PDF will be attached shortly.',
       podImageUrls: podUrls,
       invoiceImageUrls: invoiceUrls,
     });
   } catch (e) {
-    logger.error({ err: e?.response?.data || e?.message || e }, 'finalizeAssignmentUploads error');
+    console.error('finalizeAssignmentUploads error', e?.response?.data || e.message || e);
     return res.status(500).json({ error: 'Unexpected server error' });
   }
 }
@@ -532,10 +474,9 @@ async function driverSignup(req, res) {
         status: status || 'available', username, password
       },
     });
-    logger.info({ username, truckNo }, 'Driver created');
     return res.status(201).json({ message: 'Driver created successfully', driver });
   } catch (error) {
-    logger.error({ err: error?.message || error }, 'driverSignup error');
+    console.error(error);
     if (error.code === 'P2002') return res.status(400).json({ message: 'Username already exists' });
     return res.status(500).json({ message: 'Internal server error' });
   }
@@ -544,18 +485,11 @@ async function driverLogin(req, res) {
   const { username, password } = req.body;
   try {
     const driver = await prisma.Driver_Db.findUnique({ where: { username } });
-    if (!driver) {
-      logger.warn({ username }, 'Driver not found');
-      return res.status(404).json({ message: 'Driver not found' });
-    }
-    if (password != driver.password) {
-      logger.warn({ username }, 'Invalid password attempt');
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-    logger.info({ username, truckNo: driver.truckNo }, 'Driver login successful');
+    if (!driver) return res.status(404).json({ message: 'Driver not found' });
+    if (password != driver.password) return res.status(401).json({ message: 'Invalid credentials' });
     return res.status(200).json({ message: 'Login successful', truckNo: driver.truckNo, driverName: driver.driverName });
   } catch (error) {
-    logger.error({ err: error?.message || error }, 'driverLogin error');
+    console.error(error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 }
@@ -564,10 +498,7 @@ async function driverLogin(req, res) {
 function getOnedriveAuthUrl(req, res) {
   const clientId = process.env.ONEDRIVE_CLIENT_ID;
   const redirectUri = process.env.ONEDRIVE_REDIRECT_URI;
-  if (!clientId || !redirectUri) {
-    logger.warn('getOnedriveAuthUrl missing clientId/redirectUri');
-    return res.status(400).json({ error: 'ONEDRIVE_CLIENT_ID and ONEDRIVE_REDIRECT_URI must be set' });
-  }
+  if (!clientId || !redirectUri) return res.status(400).json({ error: 'ONEDRIVE_CLIENT_ID and ONEDRIVE_REDIRECT_URI must be set' });
 
   const scopes = ['offline_access', 'files.readwrite', 'openid', 'profile'];
   const params = new URLSearchParams({
@@ -582,10 +513,8 @@ async function exchangeOnedriveCode(req, res) {
     const clientId = process.env.ONEDRIVE_CLIENT_ID;
     const clientSecret = process.env.ONEDRIVE_CLIENT_SECRET;
     const redirectUri = process.env.ONEDRIVE_REDIRECT_URI;
-    if (!code || !clientId || !clientSecret || !redirectUri) {
-      logger.warn('exchangeOnedriveCode missing params');
+    if (!code || !clientId || !clientSecret || !redirectUri)
       return res.status(400).json({ error: 'code, ONEDRIVE_CLIENT_ID, ONEDRIVE_CLIENT_SECRET and ONEDRIVE_REDIRECT_URI required' });
-    }
 
     const params = new URLSearchParams();
     params.append('client_id', clientId);
@@ -600,10 +529,9 @@ async function exchangeOnedriveCode(req, res) {
       params.toString(),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
-    logger.info('Exchanged auth code for tokens (one-time)');
     return res.json({ tokens: tokenRes.data });
   } catch (e) {
-    logger.error({ err: e?.response?.data || e?.message || e }, 'exchangeOnedriveCode error');
+    console.error('exchangeOnedriveCode error', e?.response?.data || e.message || e);
     return res.status(500).json({ error: 'Failed to exchange code', details: e?.response?.data || e.message });
   }
 }
@@ -616,18 +544,25 @@ async function testOneDriveUpload(req, res) {
       const buf = Buffer.concat(chunks);
       const logical = `${datedFolderPrefix()}/pdf/POD_test_${nowTimestampAU()}.pdf`;
       const uploaded = await uploadToOneDrive(buf, logical);
-      logger.info({ logical }, 'Test PDF uploaded');
       res.json({ uploaded });
     });
     pdf.fontSize(16).text('Test ' + new Date().toISOString());
     pdf.end();
   } catch (e) {
-    logger.error({ err: e?.response?.data || e?.message || e }, 'testOneDriveUpload error');
+    console.error('testOneDriveUpload error', e?.response?.data || e.message || e);
     res.status(500).json({ error: 'Upload failed', details: e?.response?.data || e.message });
   }
 }
 
-/* ---------------------- Deprecated multipart (kept for compatibility) ---------------------- */
+/* ---------------------- Deprecated multipart (kept for compatibility) ----------------------
+   You can still POST multipart form-data like your screenshot:
+   keys: checklist (text JSON), driverName, truckNo, assignedTaskId, invoiceId, invoiceImage (file), podImage (file)
+   It will:
+   - Name files as: PodImage_<INV>_<TS>_<Desc>.jpg and InvoiceImage_<INV>_<TS>_<Desc>.jpg
+   - Upload to OneDrive
+   - Create CompletedTask_DB, delete AssignedTask_DB
+   - Build PDF in background
+----------------------------------------------------------------------- */
 async function completeAssignment(req, res) {
   try {
     const files = req.files || {};
@@ -651,6 +586,7 @@ async function completeAssignment(req, res) {
     const ts = nowTimestampAU();
     const folder = `${datedFolderPrefix()}/images`;
 
+    // Include description in legacy multipart filenames too
     const desc = safeDesc(assigned.description);
     const podName = `PodImage_${inv}_${ts}_${desc}.jpg`;
     const invoiceName = `InvoiceImage_${inv}_${ts}_${desc}.jpg`;
@@ -714,8 +650,7 @@ async function completeAssignment(req, res) {
       prisma.assignedTask_DB.delete({ where: { assignedTaskId: atId } }),
     ]);
 
-    logger.info({ assignedTaskId: atId, podUploaded: !!podUpload, invoiceUploaded: !!invUpload }, 'Multipart completeAssignment finished');
-
+    // Background PDF (from in-memory buffers if present)
     (async () => {
       try {
         const podBufs = podFile ? [podFile.buffer] : [];
@@ -728,12 +663,9 @@ async function completeAssignment(req, res) {
             where: { completedTaskId: created.completedTaskId },
             data: { POD: uploaded.webUrl },
           });
-          logger.info({ assignedTaskId: atId, pdfUrl: uploaded.webUrl }, 'Multipart PDF uploaded and attached');
-        } else {
-          logger.warn({ assignedTaskId: atId }, 'Multipart PDF uploaded but no webUrl returned');
         }
       } catch (e) {
-        logger.error({ assignedTaskId: atId, err: e?.message || e }, 'Multipart PDF build/upload failed');
+        console.error(`[Task ${assignedTaskId}] PDF build/upload failed:`, e?.message || e);
       }
     })();
 
@@ -743,7 +675,7 @@ async function completeAssignment(req, res) {
       invoiceImageUrl: invUpload?.webUrl || null,
     });
   } catch (e) {
-    logger.error({ err: e?.response?.data || e?.message || e }, 'completeAssignment error');
+    console.error('completeAssignment error', e?.response?.data || e.message || e);
     return res.status(500).json({ error: 'Unexpected server error' });
   }
 }
