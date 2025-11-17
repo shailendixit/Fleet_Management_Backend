@@ -13,6 +13,7 @@ exports.signup= async(req,res)=>{
         return res.status(201).json({message: "user created successfully", user});
     }catch(error){
         console.error(error);
+        if (error.code === 'P2002') return res.status(400).json({ message: 'Username/Email already exists' });
         return res.status(500).json({message: "internal server error"});
     }
 };
