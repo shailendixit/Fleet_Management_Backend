@@ -5,6 +5,12 @@ const { Readable } = require('stream');
 const prisma = require('../../lib/prisma');
 const path = require('path');
 
+const fs = require('fs');
+const os = require('os');
+const stream = require('stream');
+const { promisify } = require('util');
+const finished = promisify(stream.finished);
+
 /* ---------------------- small utils ---------------------- */
 function encodeDrivePath(rawPath) {
   return (rawPath || '')
@@ -204,6 +210,8 @@ async function retryAsync(fn, attempts = 3, baseDelay = 1500, label = '') {
 }
 
 /* -------------------- PDF helpers -------------------- */
+
+// existing memory-buffer builder kept for fallback (not used by default)
 function buildPdfBufferFromImages(podBuffers, invoiceBuffers, checklist) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ autoFirstPage: false });
@@ -241,6 +249,69 @@ function buildPdfBufferFromImages(podBuffers, invoiceBuffers, checklist) {
     doc.end();
   });
 }
+
+// NEW: build PDF to a temp file (stream-to-disk) -- avoids collecting PDF bytes in-memory
+async function buildPdfFileFromImages(podBuffers, invoiceBuffers, checklist, outPath) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ autoFirstPage: false });
+      const writeStream = fs.createWriteStream(outPath);
+      doc.pipe(writeStream);
+
+      const addImagePage = (buf, label) => {
+        doc.addPage({ size: 'A4', margin: 40 });
+        if (label) doc.fontSize(12).text(label, { underline: true });
+        doc.moveDown(0.5);
+        try { doc.image(buf, { fit: [520, 700], align: 'center', valign: 'center' }); }
+        catch { doc.fontSize(10).fillColor('red').text('Image could not be embedded').fillColor('black'); }
+      };
+
+      (podBuffers?.length ? podBuffers : [null]).forEach((b, i) => {
+        if (b) addImagePage(b, `POD ${i + 1}`); else doc.addPage({ size: 'A4', margin: 40 }).fontSize(12).text('No POD images provided');
+      });
+      (invoiceBuffers?.length ? invoiceBuffers : [null]).forEach((b, i) => {
+        if (b) addImagePage(b, `Invoice ${i + 1}`); else doc.addPage({ size: 'A4', margin: 40 }).fontSize(12).text('No Invoice images provided');
+      });
+
+      doc.addPage({ size: 'A4', margin: 40 });
+      doc.fontSize(12).text('Checklist / Comments:', { underline: true });
+      doc.moveDown();
+
+      try {
+        if (Array.isArray(checklist)) checklist.forEach((x, i) => doc.fontSize(11).text(`${i + 1}. ${typeof x === 'string' ? x : JSON.stringify(x)}`));
+        else if (typeof checklist === 'object' && checklist) Object.entries(checklist).forEach(([k, v]) => doc.fontSize(11).text(`${k}: ${v}`));
+        else if (typeof checklist === 'string' && checklist.trim()) doc.fontSize(11).text(checklist);
+        else doc.fontSize(11).text('No checklist provided');
+      } catch { doc.fontSize(11).text('Checklist parsing error'); }
+
+      doc.end();
+
+      finished(writeStream).then(() => resolve(outPath)).catch(reject);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/* ---------------------- concurrency limiter (semaphore) ---------------------- */
+// Simple semaphore to limit concurrent PDF jobs
+class Semaphore {
+  constructor(max) { this.max = max; this.current = 0; this.queue = []; }
+  acquire() {
+    if (this.current < this.max) { this.current++; return Promise.resolve(); }
+    return new Promise(resolve => this.queue.push(resolve));
+  }
+  release() {
+    this.current--;
+    if (this.queue.length > 0) {
+      this.current++;
+      const resolve = this.queue.shift();
+      resolve();
+    }
+  }
+}
+const PDF_CONCURRENCY = Number(process.env.PDF_CONCURRENCY) || 1; // tune via env
+const pdfSemaphore = new Semaphore(PDF_CONCURRENCY);
 
 /* ---------------------- Core handlers ---------------------- */
 async function startAssignment(req, res) {
@@ -413,8 +484,15 @@ async function finalizeAssignmentUploads(req, res) {
       prisma.assignedTask_DB.delete({ where: { assignedTaskId: atId } }),
     ]);
 
-    // Background PDF
+    // Background PDF (uses semaphore to limit concurrency and writes PDF to disk)
     (async () => {
+      // Acquire slot — if all slots are busy, this promise waits until a slot frees up
+      await pdfSemaphore.acquire();
+      console.log(
+  `[PDF] START job for assignment ${assignedTaskId} | active=${pdfSemaphore.current} | waiting=${pdfSemaphore.queue.length}`
+);
+
+      const tmpFile = `${os.tmpdir()}/pod_pdf_${Date.now()}_${Math.random().toString(36).slice(2,8)}.pdf`;
       try {
         async function collectBuffers(resolvedArr) {
           const bufs = [];
@@ -431,13 +509,18 @@ async function finalizeAssignmentUploads(req, res) {
           }
           return bufs;
         }
+
         const podBuffers = await collectBuffers(podResolved);
         const invBuffers = await collectBuffers(invResolved);
-        const pdfBuf = await buildPdfBufferFromImages(podBuffers, invBuffers, checklist);
+
+        // Build PDF to a temporary file (streaming to disk)
+        await buildPdfFileFromImages(podBuffers, invBuffers, checklist, tmpFile);
+
+        // Read temp file into buffer just for upload step (bounded by concurrency)
+        const pdfBuf = await fs.promises.readFile(tmpFile);
 
         const inv = safeInvoiceId(invoiceId || assigned.invoiceId);
         const ts = nowTimestampAU();
-        // NEW: include description in PDF name
         const desc = safeDesc(assigned.description);
         const pdfLogical = `${datedFolderPrefix()}/pdf/POD_${inv}_${ts}_${desc}.pdf`;
 
@@ -448,8 +531,26 @@ async function finalizeAssignmentUploads(req, res) {
             data: { POD: uploaded.webUrl },
           });
         }
+
+        // help GC: dereference large arrays/buffers
+        // (local variables go out of scope after this try/finally; explicit nulls speed up GC)
+        // eslint-disable-next-line no-unused-expressions
+        null;
       } catch (e) {
         console.error(`[Task ${assignedTaskId}] PDF build/upload failed:`, e?.message || e);
+      } finally {
+        // cleanup temp file
+        try {
+          console.log(
+  `[PDF] END job for assignment ${assignedTaskId} | active(before release)=${pdfSemaphore.current}`
+);
+
+          if (fs.existsSync(tmpFile)) await fs.promises.unlink(tmpFile);
+        } catch (e) {
+          console.warn('failed to remove temp pdf', e?.message || e);
+        }
+        // release semaphore slot
+        pdfSemaphore.release();
       }
     })();
 
@@ -463,6 +564,7 @@ async function finalizeAssignmentUploads(req, res) {
     return res.status(500).json({ error: 'Unexpected server error' });
   }
 }
+
 
 /* ---------------------- Driver auth (kept) ---------------------- */
 async function driverSignup(req, res) {
