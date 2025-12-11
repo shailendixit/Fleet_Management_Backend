@@ -15,6 +15,8 @@ router.post('/upload-invoice-excel', upload.single('file'), (req, res, next) => 
 // router.post('/upload-excel', upload.single('file'), taskController.uploadExcel);
 
 router.get("/getUnassignedTasks", taskController.getUnassignedTasks);
+router.delete("/deleteAllTasks", taskController.deleteAllTasks);
+
 router.get("/getAvailableDrivers", taskController.getAvailableDrivers);
 
 // Get tasks in progress (not completed)

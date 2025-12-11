@@ -140,6 +140,18 @@ exports.getUnassignedTasks = async (req, res) => {
   }
 };
 
+//--------DELETE ALL TASKS FROM TASK DB--------
+exports.deleteAllTasks = async (req, res) => {
+  try {
+    await prisma.task_DB.deleteMany({});
+    res.status(200).json({ success: true, message: "All tasks deleted successfully" });
+  } catch (err) {
+    console.error("Delete All Tasks Error:", err);
+    res.status(500).json({ success: false, error: "Failed to delete tasks" });
+  }
+};
+
+
 // Assign tasks: accepts { tasks: [ { taskId, truckNo, cubic, driverName, truckType } ] }
 exports.assignTasks = async (req, res) => {
   try {
