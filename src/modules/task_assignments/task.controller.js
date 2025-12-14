@@ -152,6 +152,95 @@ exports.deleteAllTasks = async (req, res) => {
 };
 
 
+// ----------------- Move task back to task_DB fromm assigntask db -----------------
+
+// -------- UNASSIGN TASK (MOVE FROM assignedTask_DB BACK TO task_DB) --------
+exports.unassignTask = async (req, res) => {
+  const { assignedTaskId } = req.params;
+
+  if (!assignedTaskId || isNaN(Number(assignedTaskId))) {
+    return res.status(400).json({
+      success: false,
+      error: "Valid assignedTaskId is required",
+    });
+  }
+
+  try {
+    // 1️⃣ Fetch assigned task OUTSIDE transaction (important)
+    const assignedTask = await prisma.assignedTask_DB.findUnique({
+      where: { assignedTaskId: Number(assignedTaskId) },
+    });
+
+    if (!assignedTask) {
+      return res.status(404).json({
+        success: false,
+        error: "Assigned task not found",
+      });
+    }
+
+    // 2️⃣ Prepare task_DB payload
+    const taskPayload = {
+      taskId: assignedTask.taskId,
+      orderCo: assignedTask.orderCo,
+      orTy: assignedTask.orTy,
+      orderNumber: assignedTask.orderNumber,
+      branchPlant: assignedTask.branchPlant,
+      customerPO: assignedTask.customerPO,
+      suburbTown: assignedTask.suburbTown,
+      name: assignedTask.name,
+      description: assignedTask.description,
+      quantityShipped: assignedTask.quantityShipped,
+      itemNumber: assignedTask.itemNumber,
+      postalCode: assignedTask.postalCode,
+      revNbr: assignedTask.revNbr,
+      revisionReason: assignedTask.revisionReason,
+      routeCode: assignedTask.routeCode,
+      schedPick: assignedTask.schedPick,
+      truckId: assignedTask.truckId,
+      location: assignedTask.location,
+      scheduledPickTime: assignedTask.scheduledPickTime,
+      requestDate: assignedTask.requestDate,
+      soldTo: assignedTask.soldTo,
+      shipTo: assignedTask.shipTo,
+      deliverTo: assignedTask.deliverTo,
+      stateCode: assignedTask.stateCode,
+      lnTy: assignedTask.lnTy,
+      descriptionLine2: assignedTask.descriptionLine2,
+      zoneNo: assignedTask.zoneNo,
+      stopCode: assignedTask.stopCode,
+      nextStat: assignedTask.nextStat,
+      lastStat: assignedTask.lastStat,
+      priority: assignedTask.priority,
+      futureQtyCommitted: assignedTask.futureQtyCommitted,
+      quantityOrdered: assignedTask.quantityOrdered,
+      reasonCode: assignedTask.reasonCode,
+      lineNumber: assignedTask.lineNumber,
+      isassigned: false,
+    };
+
+    // 3️⃣ Atomic operation using batch transaction
+    await prisma.$transaction([
+      prisma.task_DB.create({ data: taskPayload }),
+      prisma.assignedTask_DB.delete({
+        where: { assignedTaskId: Number(assignedTaskId) },
+      }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Task successfully unassigned and moved back to task DB",
+    });
+  } catch (err) {
+    console.error("Unassign Task Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to unassign task",
+    });
+  }
+};
+
+
+
 // Assign tasks: accepts { tasks: [ { taskId, truckNo, cubic, driverName, truckType } ] }
 exports.assignTasks = async (req, res) => {
   try {

@@ -39,6 +39,11 @@ router.post('/assignTasks', authenticateToken,  taskController.assignTasks);
 // Update manifestNo and/or invoiceId for assigned tasks (can update multiple by orderNumber or assignedTaskId)
 router.post('/assignedTasks/updateInvoiceManifest', authenticateToken, taskController.updateInvoiceManifest);
 
+// Move task back to taskdb from assignedTask_db
+router.delete("/unassignTask/:assignedTaskId", taskController.unassignTask);
+
+// Delete assigned tasks by assignedTaskIds
+
 router.get('/getLocation',taskController.getLocation);
 
 module.exports = router;
