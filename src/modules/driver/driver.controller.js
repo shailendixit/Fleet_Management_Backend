@@ -478,11 +478,15 @@ async function finalizeAssignmentUploads(req, res) {
       InvoiceImage: invoiceUrls[0] || null,
       completedAt: new Date(),
     };
+    const groupInvoiceId = invoiceId || assigned.manifestNo;
 
-    const [created] = await prisma.$transaction([
-      prisma.completedTask_DB.create({ data: completedData }),
-      prisma.assignedTask_DB.delete({ where: { assignedTaskId: atId } }),
-    ]);
+const [created] = await prisma.$transaction([
+  prisma.completedTask_DB.create({ data: completedData }),
+  prisma.assignedTask_DB.deleteMany({
+    where: { invoiceId: groupInvoiceId }
+  }),
+]);
+
 
     // Background PDF (uses semaphore to limit concurrency and writes PDF to disk)
     (async () => {

@@ -131,6 +131,7 @@ model AssignedTask_DB {
   isAttemptedToComplete       Boolean  @default(false)
     @@index([orderNumber])
     @@index([truckNo])
+    @@index([invoiceId])
 }
 
 model CompletedTask_DB {
