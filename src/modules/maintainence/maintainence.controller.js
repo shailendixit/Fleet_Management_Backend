@@ -148,6 +148,12 @@ updateData.cubic = update.cubic;
         }
         updateData.driverName = update.driverName?.trim() ?? null;
       }
+      if ('password' in update) {
+  if (!isNullOrType(update.password, 'string')) {
+    throw new Error('password must be a string or null');
+  }
+  updateData.password = update.password; // may be null if not provided
+}
 
       if ('truckType' in update) {
         if (!isNullOrType(update.truckType, 'string')) {
@@ -155,7 +161,7 @@ updateData.cubic = update.cubic;
         }
         updateData.truckType = update.truckType?.trim() ?? null;
       }
-updateData.status = update.status;
+        updateData.status = update.status;
       if ('username' in update) {
         if (!isNullOrType(update.username, 'string')) {
           throw new Error('username must be a string or null');
@@ -292,11 +298,11 @@ async function createDriver(req, res) {
       return res.status(400).json({ message: 'password must be a string or null' });
     }
 
-    let hashedPassword = null;
-    if (password && typeof password === 'string' && password.trim().length > 0) {
-      // Hash only if provided
-      hashedPassword = await bcrypt.hash(password.trim(), 12);
-    }
+    // let hashedPassword = null;
+    // if (password && typeof password === 'string' && password.trim().length > 0) {
+    //   // Hash only if provided
+    //   hashedPassword = await bcrypt.hash(password.trim(), 12);
+    // }
 
     const created = await prisma.Driver_Db.create({
       data: {
@@ -306,7 +312,7 @@ async function createDriver(req, res) {
         truckType: truckType?.trim() ?? null,
         status: status || 'available',
         username: username?.trim() ?? null,
-        password: hashedPassword, // may be null if not provided
+        password: password, // may be null if not provided
         TrackerID: TrackerID ?? null
       }
     });
