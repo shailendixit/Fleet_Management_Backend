@@ -9,9 +9,9 @@ router.post('/upload-excel', upload.single('file'), (req, res, next) => {
   next();
 }, taskController.uploadExcel);
 // Invoice upload route
-router.post('/upload-invoice-excel', upload.single('file'), (req, res, next) => {
-  next();
-}, taskController.uploadInvoiceExcel);
+// router.post('/upload-invoice-excel', upload.single('file'), (req, res, next) => {
+//   next();
+// }, taskController.uploadInvoiceExcel);
 // router.post('/upload-excel', upload.single('file'), taskController.uploadExcel);
 
 router.get("/getUnassignedTasks", taskController.getUnassignedTasks);
