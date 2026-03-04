@@ -3,94 +3,222 @@ const fs = require('fs');
 const prisma = require('../../lib/prisma');
 const ExcelJS = require("exceljs");
 const axios = require('axios');
- // Helpers
+
+
+
+// Normalize column headers
+function normalizeHeader(header) {
+  return header
+    ?.toString()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+
+// Header aliases (tolerant mapping)
+const headerAliases = {
+  invoiceId: ["documentnumber", "documentno", "invoicenumber"],
+
+  ordernumber: ["ordernumber"],
+
+  orty: ["orty"],
+
+  linenum: ["linenum", "linenumber"],
+
+  invoicedate: ["invoicedate"],
+
+  invoicetime: ["invoicetime"],
+
+  quantity: ["quantity"],
+
+  itemnumber2: ["2nditemnumber", "itemnumber2"],
+
+  description1: ["description1", "description"],
+
+  branchplant: ["branchplant"],
+
+  shiptoname: ["shiptoname"],
+
+  address1: ["address1"],
+
+  address2: ["address2"],
+
+  postcode: ["postcode", "postalcode"],
+
+  city: ["city"],
+
+  routecode: ["routecode"],
+
+  actualship: ["actualship"],
+
+  manifestnumber: ["manifestnumber"],
+
+  weightuom: ["weightuom"],
+
+  weight: ["weight"],
+
+  volumeuom: ["volumeuom"],
+
+  volume: ["volume"]
+};
+
+
+// Extract value from row using header aliases
+function getValue(row, aliases) {
+  for (const key of Object.keys(row)) {
+    const normalized = normalizeHeader(key);
+
+    if (aliases.includes(normalized)) {
+      return row[key];
+    }
+  }
+  return null;
+}
+
+
+// Safe number parser
 function safeNumber(val) {
   if (val === null || val === undefined || val === "") return null;
-  const n = Number(val);
-  return isNaN(n) ? null : n;
+
+  const num = Number(val);
+
+  return isNaN(num) ? null : num;
 }
 
+
+// Safe date parser
 function safeDate(val) {
   if (!val) return null;
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? null : d;
+
+  const date = new Date(val);
+
+  return isNaN(date.getTime()) ? null : date;
 }
 
 
-// ----------------- POPULATE TASK DB -----------------
+// Upload controller
 exports.uploadExcel = async (req, res) => {
   try {
-    const filePath = req.file.path;
 
-    // Read Excel
+    const filePath = req.file?.path;
+
     let workbook;
-    if (req.file && req.file.buffer) {
-      workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+
+    if (req.file?.buffer) {
+      workbook = xlsx.read(req.file.buffer, { type: "buffer" });
     } else {
       workbook = xlsx.readFile(filePath);
     }
+
     const sheetName = workbook.SheetNames[0];
+
     const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    // Format rows according to Prisma Task schema
+
+
+    // Format rows according to Prisma schema
     const formatted = data.map(row => ({
-  orderCo: safeNumber(row["Order Co"]),
-  orTy: row["Or Ty"] || null,
-  orderNumber: safeNumber(row["Order Number"]),
-  branchPlant: row["Branch Plant"] || null,
-  customerPO: row["Customer PO"] ? String(row["Customer PO"]) : null, // string-safe
-  suburbTown: row["Suburb/Town"] || null,
-  name: row["Name"] || null,
-  description: row["Description"] || null,
-  quantityShipped: safeNumber(row["Quantity Shipped"]),
-  itemNumber: safeNumber(row["Item Number"]),
-  postalCode: safeNumber(row["Postal Code"]),
-  revNbr: safeNumber(row["Rev Nbr"]),
-  revisionReason: row["Revision Reason"] || null,
-  routeCode: row["Route Code"] || null,
-  schedPick: safeDate(row["Sched Pick"]),
-  truckId: row["Truck I.D."] || null,
-  location: row["Location"] || null,
-  scheduledPickTime: safeNumber(row["Scheduled Pick Time"]),
-  requestDate: safeDate(row["Request Date"]),
-  soldTo: safeNumber(row["Sold To"]),
-  shipTo: safeNumber(row["Ship To"]),
-  deliverTo: safeNumber(row["Deliver To"]),
-  stateCode: row["State Code"] || null,
-  lnTy: row["Ln Ty"] || null,
-  descriptionLine2: row["Description Line 2"] || null,
-  zoneNo: row["Zone No."] || null,
-  stopCode: row["Stop Code"] || null,
-  nextStat: safeNumber(row["Next Stat"]),
-  lastStat: safeNumber(row["Last Stat"]),
-  priority: safeNumber(row["Priority (1/0)"]),
-  futureQtyCommitted: safeNumber(row["Future Qty Committed"]),
-  quantityOrdered: safeNumber(row["Quantity Ordered"]),
-  reasonCode: row["Reason Code"] || null,
-  lineNumber: safeNumber(row["Line Number"]),
-}));
 
-    // Filter out rows that do not have an Order Number (required)
-    const withOrderNumber = formatted.filter(r => r.orderNumber !== null && typeof r.orderNumber !== 'undefined');
+      invoiceId: getValue(row, headerAliases.invoiceId)
+        ? String(getValue(row, headerAliases.invoiceId))
+        : null,
 
-    // Bulk insert
-    await prisma.task_DB.createMany({
-      data: withOrderNumber,
-      skipDuplicates: true, // prevents error if same row already exists
+      ordernumber: getValue(row, headerAliases.ordernumber)
+        ? String(getValue(row, headerAliases.ordernumber))
+        : null,
+
+      orty: getValue(row, headerAliases.orty) || null,
+
+      linenum: safeNumber(getValue(row, headerAliases.linenum)),
+
+      invoicedate: safeDate(getValue(row, headerAliases.invoicedate)),
+
+      invoicetime: getValue(row, headerAliases.invoicetime)
+        ? String(getValue(row, headerAliases.invoicetime))
+        : null,
+
+      quantity: safeNumber(getValue(row, headerAliases.quantity)),
+
+      itemnumber2: getValue(row, headerAliases.itemnumber2)
+        ? String(getValue(row, headerAliases.itemnumber2))
+        : null,
+
+      description1: getValue(row, headerAliases.description1) || null,
+
+      branchplant: getValue(row, headerAliases.branchplant) || null,
+
+      shiptoname: getValue(row, headerAliases.shiptoname) || null,
+
+      address1: getValue(row, headerAliases.address1) || null,
+
+      address2: getValue(row, headerAliases.address2) || null,
+
+      postcode: getValue(row, headerAliases.postcode)
+        ? String(getValue(row, headerAliases.postcode))
+        : null,
+
+      city: getValue(row, headerAliases.city) || null,
+
+      routecode: getValue(row, headerAliases.routecode) || null,
+
+      actualship: safeDate(getValue(row, headerAliases.actualship)),
+
+      manifestnumber: getValue(row, headerAliases.manifestnumber)
+        ? String(getValue(row, headerAliases.manifestnumber))
+        : null,
+
+      weightuom: getValue(row, headerAliases.weightuom) || null,
+
+      weight: safeNumber(getValue(row, headerAliases.weight)),
+
+      volumeuom: getValue(row, headerAliases.volumeuom) || null,
+
+      volume: safeNumber(getValue(row, headerAliases.volume)),
+
+    }));
+
+
+
+    // Filter rows missing primary identifier
+    const validRows = formatted.filter(
+      r => r.invoiceId !== null && typeof r.invoiceId !== "undefined"
+    );
+
+
+
+    await prisma.task_db.createMany({
+      data: validRows,
+      skipDuplicates: true
     });
 
+
+
+    // Cleanup uploaded file
     try {
-      if (req.file && req.file.path) fs.unlink(req.file.path, err => {
-        if (err) console.error("Cleanup failed:", err);
-      });
-    } catch (e) { /* ignore cleanup errors */ }
-  res.status(200).json({ message: "Tasks inserted into DB." });
+      if (req.file?.path) {
+        fs.unlink(req.file.path, err => {
+          if (err) console.error("Cleanup failed:", err);
+        });
+      }
+    } catch (e) {}
+
+
+
+    res.status(200).json({
+      message: `${validRows.length} tasks inserted successfully`
+    });
+
   } catch (err) {
+
     console.error("Upload Error:", err);
-    res.status(500).json({ error: "Upload failed" });
+
+    res.status(500).json({
+      error: "Upload failed",
+      details: err.message
+    });
+
   }
 };
-
 // ----------------- POPULATE DRIVER DB -----------------
 exports.populateDriverDB = async (req, res) => {
   try {
@@ -244,86 +372,107 @@ exports.unassignTask = async (req, res) => {
 // Assign tasks: accepts { tasks: [ { taskId, truckNo, cubic, driverName, truckType } ] }
 exports.assignTasks = async (req, res) => {
   try {
+
     const { tasks } = req.body;
+
     if (!Array.isArray(tasks) || tasks.length === 0) {
-      return res.status(400).json({ message: 'tasks array required' });
+      return res.status(400).json({ message: "tasks array required" });
     }
 
     await prisma.$transaction(async (tx) => {
-      // fetch all task rows in one query
+
       const taskIds = tasks.map(t => t.taskId);
-      const taskRows = await tx.task_DB.findMany({
-        where: { taskId: { in: taskIds } },
+
+      const taskRows = await tx.task_db.findMany({
+        where: { taskid: { in: taskIds } }
       });
 
-      // build assigned task records
       const assignedRecords = [];
+
       for (const t of tasks) {
-        const taskRow = taskRows.find(row => row.taskId === t.taskId);
+
+        const taskRow = taskRows.find(row => row.taskid === t.taskId);
+
         if (!taskRow) continue;
 
         assignedRecords.push({
-          taskId: taskRow.taskId,
-          orderCo: taskRow.orderCo,
-          orTy: taskRow.orTy,
-          orderNumber: taskRow.orderNumber,
-          branchPlant: taskRow.branchPlant,
-          customerPO: taskRow.customerPO,
-          suburbTown: taskRow.suburbTown,
-          name: taskRow.name,
-          description: taskRow.description,
-          quantityShipped: taskRow.quantityShipped,
-          itemNumber: taskRow.itemNumber,
-          postalCode: taskRow.postalCode,
-          revNbr: taskRow.revNbr,
-          revisionReason: taskRow.revisionReason,
-          routeCode: taskRow.routeCode,
-          schedPick: taskRow.schedPick,
-          truckId: taskRow.truckId,
-          location: taskRow.location,
-          scheduledPickTime: taskRow.scheduledPickTime,
-          requestDate: taskRow.requestDate,
-          soldTo: taskRow.soldTo,
-          shipTo: taskRow.shipTo,
-          deliverTo: taskRow.deliverTo,
-          stateCode: taskRow.stateCode,
-          lnTy: taskRow.lnTy,
-          descriptionLine2: taskRow.descriptionLine2,
-          zoneNo: taskRow.zoneNo,
-          stopCode: taskRow.stopCode,
-          nextStat: taskRow.nextStat,
-          lastStat: taskRow.lastStat,
-          priority: taskRow.priority,
-          futureQtyCommitted: taskRow.futureQtyCommitted,
-          quantityOrdered: taskRow.quantityOrdered,
-          reasonCode: taskRow.reasonCode,
-          lineNumber: taskRow.lineNumber,
+
+          taskId: taskRow.taskid,
+
+          invoiceId: taskRow.invoiceId,
+          ordernumber: taskRow.ordernumber,
+          orty: taskRow.orty,
+          linenum: taskRow.linenum,
+
+          invoicedate: taskRow.invoicedate,
+          invoicetime: taskRow.invoicetime,
+
+          quantity: taskRow.quantity,
+          itemnumber2: taskRow.itemnumber2,
+          description1: taskRow.description1,
+
+          branchplant: taskRow.branchplant,
+          shiptoname: taskRow.shiptoname,
+
+          address1: taskRow.address1,
+          address2: taskRow.address2,
+
+          postcode: taskRow.postcode,
+          city: taskRow.city,
+
+          routecode: taskRow.routecode,
+
+          actualship: taskRow.actualship,
+
+          manifestnumber: taskRow.manifestnumber,
+
+          weightuom: taskRow.weightuom,
+          weight: taskRow.weight,
+
+          volumeuom: taskRow.volumeuom,
+          volume: taskRow.volume,
+
+          // driver assignment fields
           truckNo: t.truckNo || null,
           cubic: t.cubic || null,
           driverName: t.driverName || null,
           truckType: t.truckType || null,
-          invoiceId: t.invoiceId || null,
-          manifestNo: t.manifestNo || null,
           TrackerID: t.TrackerID || null,
-          status: 'Not Started',
+
+          status: "Not Started"
+
         });
+
       }
 
       if (assignedRecords.length > 0) {
-        await tx.assignedTask_DB.createMany({ data: assignedRecords });
 
-        await tx.task_DB.deleteMany({
-          where: {
-            taskId: { in: assignedRecords.map(r => r.taskId) },
-          },
+        await tx.assignedTask_DB.createMany({
+          data: assignedRecords
         });
+
+        await tx.task_db.deleteMany({
+          where: {
+            taskid: { in: assignedRecords.map(r => r.taskId) }
+          }
+        });
+
       }
+
     });
 
-    return res.status(201).json({ message: 'Tasks assigned' });
+    return res.status(201).json({
+      message: "Tasks assigned"
+    });
+
   } catch (err) {
-    console.error('Assign Tasks Error:', err);
-    return res.status(500).json({ message: 'Failed to assign tasks' });
+
+    console.error("Assign Tasks Error:", err);
+
+    return res.status(500).json({
+      message: "Failed to assign tasks"
+    });
+
   }
 };
 

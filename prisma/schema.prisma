@@ -14,44 +14,47 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Task_DB{
-  taskId                   Int      @id @default(autoincrement())
-  orderCo              Float?
-  orTy                 String?
-  orderNumber          Float?
-  branchPlant          String?
-  customerPO           String?
-  suburbTown           String?
-  name                 String?
-  description          String?
-  quantityShipped      Float?
-  itemNumber           Float?
-  postalCode           Float?
-  revNbr               Float?
-  revisionReason       String?
-  routeCode            String?
-  schedPick            DateTime?
-  truckId              String?
-  location             String?
-  scheduledPickTime    Float?
-  requestDate          DateTime?
-  soldTo               Float?
-  shipTo               Float?
-  deliverTo            Float?
-  stateCode            String?
-  lnTy                 String?
-  descriptionLine2     String?
-  zoneNo               String?
-  stopCode             String?
-  nextStat             Float?
-  lastStat             Float?
-  priority             Float?
-  futureQtyCommitted   Float?
-  quantityOrdered      Float?
-  reasonCode           String?
-  lineNumber           Float?
-  isassigned          Boolean  @default(false)
-    @@index([taskId])
+model task_db {
+  taskid            Int      @id @default(autoincrement())
+
+  invoiceId    String?
+  ordernumber       String?
+  orty              String?
+  linenum           Float?
+
+  invoicedate       DateTime?
+  invoicetime       String?
+
+  quantity          Float?
+  itemnumber2       String?
+
+  description1      String?
+
+  branchplant       String?
+
+  shiptoname        String?
+
+  address1          String?
+  address2          String?
+
+  postcode          String?
+  city              String?
+
+  routecode         String?
+
+  actualship        DateTime?
+
+  manifestnumber    String?
+
+  weightuom         String?
+  weight            Float?
+
+  volumeuom         String?
+  volume            Float?
+
+  isassigned        Boolean  @default(false)
+
+  @@index([taskid])
 }
 
 enum Status {
@@ -83,101 +86,105 @@ model User_Db {
 
 model AssignedTask_DB {
   assignedTaskId    Int      @id @default(autoincrement())
-  taskId             Int      @unique
-  orderCo              Float?
-  orTy                 String?
-  orderNumber          Float?
-  branchPlant          String?
-  customerPO           String?
-  suburbTown           String?
-  name                 String?
-  description          String?
-  quantityShipped      Float?
-  itemNumber           Float?
-  postalCode           Float?
-  revNbr               Float?
-  revisionReason       String?
-  routeCode            String?
-  schedPick            DateTime?
-  TrackerID             Int?
-  truckId              String?
-  location             String?
-  scheduledPickTime    Float?
-  requestDate          DateTime?
-  soldTo               Float?
-  shipTo               Float?
-  deliverTo            Float?
-  stateCode            String?
-  lnTy                 String?
-  descriptionLine2     String?
-  zoneNo               String?
-  stopCode             String?
-  nextStat             Float?
-  lastStat             Float?
-  priority             Float?
-  futureQtyCommitted   Float?
-  quantityOrdered      Float?
-  reasonCode           String?
-  lineNumber           Float?
-  truckNo             Int?
-  cubic               Float?   @map("Cubic (m3)")
-  driverName          String?  @map("Drivers Name")
-  truckType           String?  @map("Truck")
-  status              String?  @default("Not Started")
-  assignedAt         DateTime @default(now())
-  invoiceId          String? 
-  manifestNo         String? 
+  taskId            Int      @unique
+
+  invoiceId         String?
+  ordernumber       String?
+  orty              String?
+  linenum           Float?
+
+  invoicedate       DateTime?
+  invoicetime       String?
+
+  quantity          Float?
+  itemnumber2       String?
+  description1      String?
+
+  branchplant       String?
+  shiptoname        String?
+
+  address1          String?
+  address2          String?
+
+  postcode          String?
+  city              String?
+
+  routecode         String?
+
+  actualship        DateTime?
+
+  manifestnumber    String?
+
+  weightuom         String?
+  weight            Float?
+
+  volumeuom         String?
+  volume            Float?
+
+  // driver assignment fields (unchanged)
+  TrackerID         Int?
+  truckNo           Int?
+  cubic             Float?   @map("Cubic (m3)")
+  driverName        String?  @map("Drivers Name")
+  truckType         String?  @map("Truck")
+
+  status            String?  @default("Not Started")
+  assignedAt        DateTime @default(now())
+
   isCompleted       Boolean  @default(false)
-  isAttemptedToComplete       Boolean  @default(false)
-    @@index([orderNumber])
-    @@index([truckNo])
-    @@index([invoiceId])
+  isAttemptedToComplete Boolean  @default(false)
+
+  @@index([ordernumber])
+  @@index([assignedTaskId])
+  @@index([invoiceId])
 }
 
 model CompletedTask_DB {
-  completedTaskId    Int      @id @default(autoincrement())
-  taskId             Int      @unique
-  orderCo              Float?
-  orTy                 String?
-  orderNumber          Float?
-  branchPlant          String?
-  customerPO           String?
-  suburbTown           String?
-  name                 String?
-  description          String?
-  quantityShipped      Float?
-  itemNumber           Float?
-  postalCode           Float?
-  revNbr               Float?
-  revisionReason       String?
-  routeCode            String?
-  schedPick            DateTime?
-  truckId              String?
-  location             String?
-  scheduledPickTime    Float?
-  requestDate          DateTime?
-  soldTo               Float?
-  shipTo               Float?
-  deliverTo            Float?
-  stateCode            String?
-  lnTy                 String?
-  descriptionLine2     String?
-  zoneNo               String?
-  stopCode             String?
-  nextStat             Float?
-  lastStat             Float?
-  priority             Float?
-  futureQtyCommitted   Float?
-  quantityOrdered      Float?
-  reasonCode           String?
-  lineNumber           Float?
-  truckNo             Int?
-  driverName          String?  @map("Drivers Name")
-  assignedAt         DateTime @default(now())
-  invoiceId          String? 
-  manifestNo         String? 
+  completedTaskId   Int      @id @default(autoincrement())
+  taskId            Int      @unique
+
+  invoiceId         String?
+  ordernumber       String?
+  orty              String?
+  linenum           Float?
+
+  invoicedate       DateTime?
+  invoicetime       String?
+
+  quantity          Float?
+  itemnumber2       String?
+  description1      String?
+
+  branchplant       String?
+  shiptoname        String?
+
+  address1          String?
+  address2          String?
+
+  postcode          String?
+  city              String?
+
+  routecode         String?
+
+  actualship        DateTime?
+
+  manifestnumber    String?
+
+  weightuom         String?
+  weight            Float?
+
+  volumeuom         String?
+  volume            Float?
+
+  truckNo           Int?
+  driverName        String?  @map("Drivers Name")
+  assignedAt        DateTime @default(now())
+
+  manifestNo        String?
+
   POD               String?
-  InvoiceImage     String?
-  PodImage      String?
+  InvoiceImage      String?
+  PodImage          String?
+
   completedAt       DateTime @default(now())
 }

@@ -251,8 +251,8 @@ async function processParsedEmail(parsed) {
                 }
             }
 
-            if (subject.toLowerCase().includes('tasksheet')) {
-                console.log('Detected TaskSheet -> calling uploadExcel in-process');
+            if (subject.toLowerCase().includes('au carrier 4')) {
+                console.log('Detected slikreport -> calling uploadExcel in-process');
                 const fakeReq = { file: { buffer: processedAttachment.content } };
                 const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadExcel result', c, b) }) };
                 try { await taskController.uploadExcel(fakeReq, fakeRes); }

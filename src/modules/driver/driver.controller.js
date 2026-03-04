@@ -433,51 +433,54 @@ async function finalizeAssignmentUploads(req, res) {
     const invoiceUrls = invResolved.map(x => x.webUrl);
 
     const completedData = {
-      taskId: assigned.taskId,
-      orderCo: assigned.orderCo,
-      orTy: assigned.orTy,
-      orderNumber: assigned.orderNumber,
-      branchPlant: assigned.branchPlant,
-      customerPO: assigned.customerPO,
-      suburbTown: assigned.suburbTown,
-      name: assigned.name,
-      description: assigned.description,
-      quantityShipped: assigned.quantityShipped,
-      itemNumber: assigned.itemNumber,
-      postalCode: assigned.postalCode,
-      revNbr: assigned.revNbr,
-      revisionReason: assigned.revisionReason,
-      routeCode: assigned.routeCode,
-      schedPick: assigned.schedPick,
-      truckId: assigned.truckId,
-      location: assigned.location,
-      scheduledPickTime: assigned.scheduledPickTime,
-      requestDate: assigned.requestDate,
-      soldTo: assigned.soldTo,
-      shipTo: assigned.shipTo,
-      deliverTo: assigned.deliverTo,
-      stateCode: assigned.stateCode,
-      lnTy: assigned.lnTy,
-      descriptionLine2: assigned.descriptionLine2,
-      zoneNo: assigned.zoneNo,
-      stopCode: assigned.stopCode,
-      nextStat: assigned.nextStat,
-      lastStat: assigned.lastStat,
-      priority: assigned.priority,
-      futureQtyCommitted: assigned.futureQtyCommitted,
-      quantityOrdered: assigned.quantityOrdered,
-      reasonCode: assigned.reasonCode,
-      lineNumber: assigned.lineNumber,
-      truckNo: truckNo !== undefined ? Number(truckNo) : assigned.truckNo,
-      driverName: driverName || assigned.driverName,
-      assignedAt: assigned.assignedAt,
-      invoiceId: invoiceId || assigned.invoiceId,
-      manifestNo: assigned.manifestNo,
-      POD: null,
-      PodImage: podUrls[0] || null,
-      InvoiceImage: invoiceUrls[0] || null,
-      completedAt: new Date(),
-    };
+  taskId: assigned.taskId,
+
+  invoiceId: invoiceId || assigned.invoiceId,
+  ordernumber: assigned.ordernumber,
+  orty: assigned.orty,
+  linenum: assigned.linenum,
+
+  invoicedate: assigned.invoicedate,
+  invoicetime: assigned.invoicetime,
+
+  quantity: assigned.quantity,
+  itemnumber2: assigned.itemnumber2,
+  description1: assigned.description1,
+
+  branchplant: assigned.branchplant,
+  shiptoname: assigned.shiptoname,
+
+  address1: assigned.address1,
+  address2: assigned.address2,
+
+  postcode: assigned.postcode,
+  city: assigned.city,
+
+  routecode: assigned.routecode,
+
+  actualship: assigned.actualship,
+
+  manifestnumber: assigned.manifestnumber,
+
+  weightuom: assigned.weightuom,
+  weight: assigned.weight,
+
+  volumeuom: assigned.volumeuom,
+  volume: assigned.volume,
+
+  truckNo: truckNo !== undefined ? Number(truckNo) : assigned.truckNo,
+  driverName: driverName || assigned.driverName,
+
+  assignedAt: assigned.assignedAt,
+
+  manifestNo: assigned.manifestNo,
+
+  POD: null,
+  PodImage: podUrls[0] || null,
+  InvoiceImage: invoiceUrls[0] || null,
+
+  completedAt: new Date(),
+};
 const groupInvoiceId = invoiceId || assigned.invoiceId;
 
 const deleteAssignedQuery = groupInvoiceId
