@@ -186,7 +186,7 @@ exports.uploadExcel = async (req, res) => {
 
 
 
-    await prisma.task_db.createMany({
+    await prisma.Task_DB.createMany({
       data: validRows,
       skipDuplicates: true
     });
@@ -260,7 +260,7 @@ exports.populateDriverDB = async (req, res) => {
 // ----------------- FETCH TASK DATA -----------------
 exports.getUnassignedTasks = async (req, res) => {
   try {
-    const tasks = await prisma.task_DB.findMany({ where: { isassigned: false } });
+    const tasks = await prisma.Task_DB.findMany({ where: { isassigned: false } });
     res.status(200).json(tasks);
   } catch (err) {
     console.error("Fetch Tasks Error:", err);
@@ -271,7 +271,7 @@ exports.getUnassignedTasks = async (req, res) => {
 //--------DELETE ALL TASKS FROM TASK DB--------
 exports.deleteAllTasks = async (req, res) => {
   try {
-    await prisma.task_DB.deleteMany({});
+    await prisma.Task_DB.deleteMany({});
     res.status(200).json({ success: true, message: "All tasks deleted successfully" });
   } catch (err) {
     console.error("Delete All Tasks Error:", err);
@@ -348,7 +348,7 @@ exports.unassignTask = async (req, res) => {
 
     // 3️⃣ Atomic operation using batch transaction
     await prisma.$transaction([
-      prisma.task_DB.create({ data: taskPayload }),
+      prisma.Task_DB.create({ data: taskPayload }),
       prisma.assignedTask_DB.delete({
         where: { assignedTaskId: Number(assignedTaskId) },
       }),
@@ -383,7 +383,7 @@ exports.assignTasks = async (req, res) => {
 
       const taskIds = tasks.map(t => t.taskId);
 
-      const taskRows = await tx.task_db.findMany({
+      const taskRows = await tx.Task_DB.findMany({
         where: { taskid: { in: taskIds } }
       });
 
@@ -451,7 +451,7 @@ exports.assignTasks = async (req, res) => {
           data: assignedRecords
         });
 
-        await tx.task_db.deleteMany({
+        await tx.Task_DB.deleteMany({
           where: {
             taskid: { in: assignedRecords.map(r => r.taskId) }
           }

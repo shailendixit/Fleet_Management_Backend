@@ -14,7 +14,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model task_db {
+model Task_DB {
   taskid            Int      @id @default(autoincrement())
 
   invoiceId    String?
