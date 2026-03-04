@@ -258,15 +258,16 @@ async function processParsedEmail(parsed) {
                 try { await taskController.uploadExcel(fakeReq, fakeRes); }
                 catch (e) { console.error('uploadExcel failed:', e); }
 
-            } else if (subject.toLowerCase().includes('invoicesheet') || subject.toLowerCase().includes('slik')) {
-                console.log('Detected InvoiceSheet -> calling uploadInvoiceExcel in-process');
-                const fakeReq = { file: { buffer: processedAttachment.content } };
-                const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadInvoiceExcel result', c, b) }) };
-                try {
-                    await taskController.uploadInvoiceExcel(fakeReq, fakeRes);
-                    await sendMissingInvoiceAlert();
-                } catch (e) { console.error('uploadInvoiceExcel failed:', e); }
-            }
+            } 
+            // else if (subject.toLowerCase().includes('invoicesheet') || subject.toLowerCase().includes('slik')) {
+            //     console.log('Detected InvoiceSheet -> calling uploadInvoiceExcel in-process');
+            //     const fakeReq = { file: { buffer: processedAttachment.content } };
+            //     const fakeRes = { status: (c) => ({ json: (b) => console.log('uploadInvoiceExcel result', c, b) }) };
+            //     try {
+            //         await taskController.uploadInvoiceExcel(fakeReq, fakeRes);
+            //         await sendMissingInvoiceAlert();
+            //     } catch (e) { console.error('uploadInvoiceExcel failed:', e); }
+            // }
         }
     } catch (e) {
         console.error('processParsedEmail error:', e);
