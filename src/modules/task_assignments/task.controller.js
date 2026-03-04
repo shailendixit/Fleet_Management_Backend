@@ -294,7 +294,7 @@ exports.unassignTask = async (req, res) => {
   }
 
   try {
-    // 1️⃣ Fetch assigned task OUTSIDE transaction (important)
+    // 1️⃣ Fetch assigned task
     const assignedTask = await prisma.assignedTask_DB.findUnique({
       where: { assignedTaskId: Number(assignedTaskId) },
     });
@@ -306,47 +306,45 @@ exports.unassignTask = async (req, res) => {
       });
     }
 
-    // 2️⃣ Prepare task_DB payload
+    // 2️⃣ Prepare payload (NO taskid — DB will auto-generate)
     const taskPayload = {
-      taskId: assignedTask.taskId,
-      orderCo: assignedTask.orderCo,
-      orTy: assignedTask.orTy,
-      orderNumber: assignedTask.orderNumber,
-      branchPlant: assignedTask.branchPlant,
-      customerPO: assignedTask.customerPO,
-      suburbTown: assignedTask.suburbTown,
-      name: assignedTask.name,
-      description: assignedTask.description,
-      quantityShipped: assignedTask.quantityShipped,
-      itemNumber: assignedTask.itemNumber,
-      postalCode: assignedTask.postalCode,
-      revNbr: assignedTask.revNbr,
-      revisionReason: assignedTask.revisionReason,
-      routeCode: assignedTask.routeCode,
-      schedPick: assignedTask.schedPick,
-      truckId: assignedTask.truckId,
-      location: assignedTask.location,
-      scheduledPickTime: assignedTask.scheduledPickTime,
-      requestDate: assignedTask.requestDate,
-      soldTo: assignedTask.soldTo,
-      shipTo: assignedTask.shipTo,
-      deliverTo: assignedTask.deliverTo,
-      stateCode: assignedTask.stateCode,
-      lnTy: assignedTask.lnTy,
-      descriptionLine2: assignedTask.descriptionLine2,
-      zoneNo: assignedTask.zoneNo,
-      stopCode: assignedTask.stopCode,
-      nextStat: assignedTask.nextStat,
-      lastStat: assignedTask.lastStat,
-      priority: assignedTask.priority,
-      futureQtyCommitted: assignedTask.futureQtyCommitted,
-      quantityOrdered: assignedTask.quantityOrdered,
-      reasonCode: assignedTask.reasonCode,
-      lineNumber: assignedTask.lineNumber,
+      invoiceId: assignedTask.invoiceId,
+      ordernumber: assignedTask.ordernumber,
+      orty: assignedTask.orty,
+      linenum: assignedTask.linenum,
+
+      invoicedate: assignedTask.invoicedate,
+      invoicetime: assignedTask.invoicetime,
+
+      quantity: assignedTask.quantity,
+      itemnumber2: assignedTask.itemnumber2,
+      description1: assignedTask.description1,
+
+      branchplant: assignedTask.branchplant,
+      shiptoname: assignedTask.shiptoname,
+
+      address1: assignedTask.address1,
+      address2: assignedTask.address2,
+
+      postcode: assignedTask.postcode,
+      city: assignedTask.city,
+
+      routecode: assignedTask.routecode,
+
+      actualship: assignedTask.actualship,
+
+      manifestnumber: assignedTask.manifestnumber,
+
+      weightuom: assignedTask.weightuom,
+      weight: assignedTask.weight,
+
+      volumeuom: assignedTask.volumeuom,
+      volume: assignedTask.volume,
+
       isassigned: false,
     };
 
-    // 3️⃣ Atomic operation using batch transaction
+    // 3️⃣ Transaction
     await prisma.$transaction([
       prisma.Task_DB.create({ data: taskPayload }),
       prisma.assignedTask_DB.delete({
@@ -358,15 +356,16 @@ exports.unassignTask = async (req, res) => {
       success: true,
       message: "Task successfully unassigned and moved back to task DB",
     });
+
   } catch (err) {
     console.error("Unassign Task Error:", err);
+
     return res.status(500).json({
       success: false,
       error: "Failed to unassign task",
     });
   }
 };
-
 
 
 // Assign tasks: accepts { tasks: [ { taskId, truckNo, cubic, driverName, truckType } ] }
@@ -730,31 +729,59 @@ exports.uploadInvoiceExcel = async (req, res) => {
 
 
 exports.getAssignedTasks = async (req, res) => {
-    try {
-        const prisma = require('../../lib/prisma');
-        const { truckId, truckNo } = req.query;
+  try {
+    const prisma = require('../../lib/prisma');
+    const { truckId, truckNo } = req.query;
 
-        // Build where clause only with provided filters
-        const where = {};
-        if (truckId) where.truckId = String(truckId);
-        if (truckNo) {
-            const tn = Number(truckNo);
-            if (!Number.isNaN(tn)) where.truckNo = tn;
-        }
+    const where = {};
 
-        // If no filter provided, this will return all assigned tasks (limit to sane number)
-        const tasks = await prisma.assignedTask_DB.findMany({
-            where,
-            orderBy: { assignedAt: 'desc' },
-            take: 200
-        });
+    if (truckId) where.truckId = String(truckId);
 
-        return res.status(200).json({ tasks });
-    } catch (err) {
-        console.error('getAssignedTasks error:', err);
-        return res.status(500).json({ error: 'Internal server error' });
+    if (truckNo) {
+      const tn = Number(truckNo);
+      if (!Number.isNaN(tn)) where.truckNo = tn;
     }
-}
+
+    const rows = await prisma.assignedTask_DB.findMany({
+      where,
+      orderBy: { assignedAt: 'desc' },
+      take: 200
+    });
+
+    // 🔁 Map new schema → old mobile schema
+    const tasks = rows.map(t => ({
+      assignedTaskId: t.assignedTaskId,
+      taskId: t.taskId,
+
+      invoiceId: t.invoiceId,
+
+      // old mobile names
+      orderNumber: t.ordernumber,
+      description: t.description1,
+      name: t.shiptoname,
+      zoneNo: t.routecode,
+
+      // quantity fallback compatibility
+      quantityShipped: t.quantity,
+      quantityOrdered: t.quantity,
+
+      assignedAt: t.assignedAt,
+      status: t.status,
+
+      isCompleted: t.isCompleted,
+      isAttemptedToComplete: t.isAttemptedToComplete,
+
+      // keep original fields also (safe for future)
+      ...t
+    }));
+
+    return res.status(200).json({ tasks });
+
+  } catch (err) {
+    console.error('getAssignedTasks error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
 
 // ----------------- FETCH DRIVER DATA -----------------
 exports.getAvailableDrivers = async (req, res) => {
