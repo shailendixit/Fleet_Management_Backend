@@ -487,7 +487,7 @@ exports.getTasksInProgress = async (req, res) => {
   }
 };
 exports.getLocation = async (req, res) => {
- try {
+  try {
     const { NETSTAR_BASE_URL, NETSTAR_USERNAME, NETSTAR_PASSWORD } = process.env;
 
     const response = await axios.get(NETSTAR_BASE_URL, {
@@ -497,11 +497,20 @@ exports.getLocation = async (req, res) => {
       }
     });
 
-    res.status(200).json(response.data);
+    // Wrap response to match frontend expectations
+    res.status(200).json({
+      success: true,
+      data: response.data
+    });
 
   } catch (error) {
-    console.error('Netstar API Error:', error.message);
-    res.status(500).json({ message: 'Failed to fetch Netstar data', error: error.message });
+    console.error("Netstar API Error:", error.message);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch Netstar data",
+      error: error.message
+    });
   }
 };
 
