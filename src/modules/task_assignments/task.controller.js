@@ -551,7 +551,7 @@ exports.getTasksWithoutInvoiceExcel = async (req, res) => {
 exports.getCompletedTasks = async (req, res) => {
   try {
     const twoDaysAgo = new Date();
-    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2); // subtract 2 days
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 6); // subtract 6 days
 
     const tasks = await prisma.completedTask_DB.findMany({
       where: {
