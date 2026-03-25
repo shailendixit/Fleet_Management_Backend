@@ -332,7 +332,32 @@ async function startAssignment(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
+async function createPublicShareLink(logicalPath) {
+  const accessToken = await getGraphToken();
+  const root = driveRootBase();
+  const pathPart = encodeDrivePath(logicalPath);
 
+  try {
+    const res = await axios.post(
+      `${root}/root:/${pathPart}:/createLink`,
+      {
+        type: "view",
+        scope: "anonymous"
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        timeout: 15000 // keep tight (fast fail)
+      }
+    );
+
+    return res.data?.link?.webUrl || null;
+  } catch (err) {
+    console.warn("createPublicShareLink failed:", err?.response?.data || err.message);
+    return null; // important → no throw
+  }
+}
 /**
  * Create OneDrive upload sessions for POD & Invoice.
  * Body: { assignedTaskId, invoiceId }
@@ -540,11 +565,16 @@ const [created] = await prisma.$transaction([
 
         const uploaded = await retryAsync(() => uploadToOneDrive(pdfBuf, pdfLogical), 3, 1500, 'uploadPDF');
         if (uploaded?.webUrl) {
-          await prisma.completedTask_DB.update({
-            where: { completedTaskId: created.completedTaskId },
-            data: { POD: uploaded.webUrl },
-          });
-        }
+  let finalUrl = uploaded.webUrl; // fallback
+
+  const publicUrl = await createPublicShareLink(pdfLogical);
+  if (publicUrl) finalUrl = publicUrl;
+
+  await prisma.completedTask_DB.update({
+    where: { completedTaskId: created.completedTaskId },
+    data: { POD: finalUrl },
+  });
+}
 
         // help GC: dereference large arrays/buffers
         // (local variables go out of scope after this try/finally; explicit nulls speed up GC)
