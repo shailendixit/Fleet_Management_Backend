@@ -271,7 +271,9 @@ exports.getUnassignedTasks = async (req, res) => {
 //--------DELETE ALL TASKS FROM TASK DB--------
 exports.deleteAllTasks = async (req, res) => {
   try {
+    
     await prisma.Task_DB.deleteMany({});
+    console.log("All tasks deleted from Task_DB.");
     res.status(200).json({ success: true, message: "All tasks deleted successfully" });
   } catch (err) {
     console.error("Delete All Tasks Error:", err);
@@ -305,6 +307,7 @@ exports.unassignTask = async (req, res) => {
         error: "Assigned task not found",
       });
     }
+    console.log("Unassigning task:", assignedTaskId);
 
     // 2️⃣ Prepare payload (NO taskid — DB will auto-generate)
     const taskPayload = {
