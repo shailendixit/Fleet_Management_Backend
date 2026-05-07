@@ -457,6 +457,47 @@ async function processUnreadGmailMessages() {
     }
 }
 
+async function processSpecificMessage(msgId) {
+    // Prevent double-processing
+    if (global.__processedMessageIds.has(msgId)) {
+        console.log('Message already processed:', msgId);
+        return;
+    }
+
+    try {
+        const tokenInfo = await getOutlookGraphToken();
+        const accessToken = tokenInfo.accessToken;
+        const userId = process.env.OUTLOOK_USER_ID || process.env.ONEDRIVE_USER_ID;
+        const userPath = tokenInfo.delegated ? 'me' : `users/${userId}`;
+
+        // Fetch RAW MIME content directly via ID (this bypasses search indexing lag)
+        const getUrl = `https://graph.microsoft.com/v1.0/${userPath}/messages/${encodeURIComponent(msgId)}/$value`;
+        
+        const msgRes = await retryAsync(
+            () => axios.get(getUrl, { 
+                headers: { Authorization: `Bearer ${accessToken}` }, 
+                responseType: 'arraybuffer', 
+                timeout: 40000 
+            }),
+            3, 2000
+        );
+
+        const buffer = Buffer.from(msgRes.data);
+        await processRawBuffer(buffer);
+
+        // Mark as read so it doesn't get picked up by the general poll later
+        await markMessageReadWithRetry({ accessToken, userPath, subscriptionMessageId: msgId });
+
+        // Cache the ID to prevent duplicates
+        const ttlMs = Number(process.env.OUTLOOK_PROCESSED_MSG_TTL_MS || 24 * 60 * 60 * 1000);
+        global.__processedMessageIds.set(msgId, Date.now() + ttlMs);
+
+        console.log(`Successfully processed specific message: ${msgId}`);
+    } catch (e) {
+        console.error(`Failed specific message processing for ${msgId}:`, e?.response?.data || e.message);
+    }
+}
+
 /**
  * Start Gmail watch so Gmail publishes notifications to a Pub/Sub topic.
  * Requires GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET, GMAIL_OAUTH_REFRESH_TOKEN, and PUBSUB_TOPIC_NAME env vars.
@@ -656,4 +697,4 @@ async function markMessageReadWithRetry({ accessToken, userPath, subscriptionMes
 //     startWatch().catch(e => console.error('startWatch failed:', e));
 // }
 
-module.exports = { startWatch, processUnreadGmailMessages, sendMissingInvoiceAlertViaGraph, processRawBuffer, processParsedEmail };
+module.exports = { startWatch, processUnreadGmailMessages,processSpecificMessage, sendMissingInvoiceAlertViaGraph, processRawBuffer, processParsedEmail };
