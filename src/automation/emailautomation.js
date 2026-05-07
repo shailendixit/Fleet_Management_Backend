@@ -374,13 +374,41 @@ async function processUnreadGmailMessages() {
 
     // Query unread messages
     const listUrl = `https://graph.microsoft.com/v1.0/${userPath}/mailFolders/Inbox/messages?$filter=isRead eq false&$top=50`;
-        const listRes = await retryAsync(
-          () => axios.get(listUrl, { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 20000 }),
-          Number(process.env.OUTLOOK_LIST_RETRIES || 3),
-          Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000)
-        );
-        const messages = (listRes.data && listRes.data.value) || [];
-        if (!messages.length) { console.log('No unread messages found via Outlook Graph'); return; }
+        let messages = [];
+        let indexingAttempts = 0;
+        const maxIndexingAttempts = 3; 
+
+        while (indexingAttempts < maxIndexingAttempts) {
+            // Keep your original retryAsync logic for technical network errors
+            const listRes = await retryAsync(
+                () => axios.get(listUrl, { 
+                    headers: { Authorization: `Bearer ${accessToken}` }, 
+                    timeout: 20000 
+                }),
+                Number(process.env.OUTLOOK_LIST_RETRIES || 3),
+                Number(process.env.OUTLOOK_SUBSCRIPTION_RETRY_BASE_MS || 2000)
+            );
+
+            messages = (listRes.data && listRes.data.value) || [];
+
+            // If we found messages, we are done!
+            if (messages.length > 0) {
+                break; 
+            }
+
+            // If we got here, it was a "Technical Success" (200 OK) but a "Logical Failure" (0 messages)
+            indexingAttempts++;
+            if (indexingAttempts < maxIndexingAttempts) {
+                console.log(`Replication lag: 200 OK received but Inbox empty. Attempt ${indexingAttempts}/${maxIndexingAttempts}. Waiting 4s...`);
+                // Wait 4 seconds for the Microsoft Search Index to catch up
+                await new Promise(resolve => setTimeout(resolve, 4000));
+            }
+        }
+
+        if (!messages.length) { 
+            console.log('No unread messages found via Outlook Graph after indexing retries'); 
+            return; 
+        }
 
         for (const m of messages) {
             const msgId = m.id;
