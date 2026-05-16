@@ -41,7 +41,7 @@ router.post('/push', async (req, res) => {
         res.status(200).send('OK');
 
         // 3. Process specific notifications
-        console.log("req.body of mail notification recieved:", req.body);
+        // console.log("req.body of mail notification recieved:", req.body);
         const notifications = req.body?.value || [];
         if (notifications.length > 0) {
             console.log(`Received ${notifications.length} notification(s).`);
