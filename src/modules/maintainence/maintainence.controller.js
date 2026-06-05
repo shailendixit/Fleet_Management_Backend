@@ -298,6 +298,13 @@ async function createDriver(req, res) {
       return res.status(400).json({ message: 'password must be a string or null' });
     }
 
+    const currentDriverCount = await prisma.Driver_Db.count();
+    
+    if (currentDriverCount >= process.env.MAX_DRIVERS) {
+      return res.status(403).json({ 
+        message: 'You cannot add more drivers. Limit exceeded for creating new drivers.' 
+      });
+    }
     // let hashedPassword = null;
     // if (password && typeof password === 'string' && password.trim().length > 0) {
     //   // Hash only if provided
